@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="id" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lettuce Monitor</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config={darkMode:'class'}</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{font-family:'Inter',sans-serif}
+.custom-scrollbar::-webkit-scrollbar{width:6px;height:6px}
+.custom-scrollbar::-webkit-scrollbar-track{background:rgba(15,23,42,.8)}
+.custom-scrollbar::-webkit-scrollbar-thumb{background:#334155;border-radius:4px}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover{background:#a855f7}
+.glass-panel{background:rgba(15,23,42,.85);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.08)}
+.nav-btn{width:100%;display:flex;align-items:center;gap:.75rem;padding:.65rem .9rem;border-radius:.6rem;font-size:.8rem;font-weight:600;color:#94a3b8;transition:.15s;cursor:pointer;text-align:left}
+.nav-btn:hover{color:#fff;background:rgba(51,65,85,.5)}
+.nav-btn.active{background:#9333ea;color:#fff;box-shadow:0 6px 18px rgba(88,28,135,.35)}
+.inp{background:#0f172a;border:1px solid #334155;border-radius:.5rem;padding:.4rem .6rem;font-size:.75rem;color:#fff;outline:none}
+.inp:focus{border-color:#a855f7}
+#camBox:fullscreen{background:#000;display:flex;align-items:center;justify-content:center}
+#camBox:fullscreen #camImg{width:100%;height:100%;object-fit:contain}
+</style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen custom-scrollbar">
+ 
+<!-- MOBILE TOPBAR -->
+<div class="lg:hidden sticky top-0 z-40 bg-slate-900/95 border-b border-slate-800 h-14 px-4 flex items-center justify-between">
+  <div class="flex items-center gap-2"><i class="fa-solid fa-seedling text-purple-300 text-xl"></i><span class="font-bold text-sm">AgriAI Lettuce</span></div>
+  <button onclick="toggleSidebar()" class="p-2 text-slate-300"><i class="fa-solid fa-bars text-lg"></i></button>
+</div>
+ 
+<!-- SIDEBAR -->
+<aside id="sidebar" class="fixed top-0 left-0 z-50 h-full w-64 bg-slate-900/95 backdrop-blur border-r border-slate-800 flex flex-col -translate-x-full lg:translate-x-0 transition-transform">
+  <div class="p-4 border-b border-slate-800 flex items-center gap-3">
+    <div class="p-2.5 bg-purple-500/20 text-purple-300 rounded-xl border border-purple-500/30"><i class="fa-solid fa-seedling text-2xl"></i></div>
+    <div>
+      <h1 class="text-sm font-bold text-white leading-tight">Lettuce Monitor</h1>
+      <p class="text-[10px] text-slate-400">Smart Farming &amp; Hybrid AI (LSTM + CNN)</p>
+    </div>
+  </div>
+  <nav class="flex-1 p-3 space-y-1.5 overflow-y-auto custom-scrollbar">
+    <button class="nav-btn active" id="nav-monitoring" onclick="switchTab('monitoring')"><i class="fa-solid fa-gauge-high w-4"></i> Monitoring</button>
+    <button class="nav-btn" id="nav-camera" onclick="switchTab('camera')"><i class="fa-solid fa-video w-4"></i> Camera ESP-32</button>
+    <button class="nav-btn" id="nav-lstm" onclick="switchTab('lstm')"><i class="fa-solid fa-clock-rotate-left w-4"></i> LSTM</button>
+    <button class="nav-btn" id="nav-cnn" onclick="switchTab('cnn')"><i class="fa-solid fa-camera w-4"></i> CNN</button>
+    <button class="nav-btn" id="nav-history" onclick="switchTab('history')"><i class="fa-solid fa-table w-4"></i> History</button>
+  </nav>
+  <div class="p-4 border-t border-slate-800 text-[10px] text-slate-500">Tanaman Selada &bull; Panen 42 HST</div>
+</aside>
+<div id="overlay" onclick="toggleSidebar()" class="hidden fixed inset-0 bg-black/60 z-40 lg:hidden"></div>
+ 
+<!-- MAIN -->
+<main class="lg:ml-64 px-4 sm:px-6 py-6 space-y-6 min-h-screen">
+ 
+<!-- ================= MONITORING ================= -->
+<section id="tab-monitoring" class="tab space-y-6">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h2 class="text-lg font-bold text-white">Monitoring</h2>
+      <p class="text-xs text-slate-400">Data sensor real-time &amp; status pompa irigasi</p>
+    </div>
+    <div class="flex flex-wrap items-center gap-2 text-xs">
+      <select id="srcMode" class="inp" onchange="changeSource()">
+        <option value="sim">Mode Simulasi</option>
+        <option value="esp">ESP32 (HTTP)</option>
+      </select>
+      <input id="espIp" class="inp w-40" placeholder="IP ESP32 sensor" value="192.168.1.101">
+      <span id="srcBadge" class="px-2 py-1 rounded-full border border-purple-500/30 bg-purple-500/10 text-purple-300 text-[11px]">Simulasi</span>
+    </div>
+  </div>
+ 
+  <!-- KPI -->
+  <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+    <div class="glass-panel p-4 rounded-xl">
+      <div class="flex justify-between items-start">
+        <div>
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Soil Moisture</p>
+          <h3 class="text-2xl font-bold text-white mt-1" id="kSoil">-- %</h3>
+          <p class="text-xs mt-1 text-purple-300" id="kSoilS">Ideal (60 - 80%)</p>
+        </div>
+        <div class="p-3 bg-purple-500/10 text-purple-300 rounded-lg border border-purple-500/20"><i class="fa-solid fa-droplet text-xl"></i></div>
+      </div>
+      <div class="w-full bg-slate-800 h-1.5 rounded-full mt-3 overflow-hidden"><div id="bSoil" class="bg-purple-400 h-full rounded-full transition-all duration-500" style="width:0"></div></div>
+    </div>
+    <div class="glass-panel p-4 rounded-xl">
+      <div class="flex justify-between items-start">
+        <div>
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Suhu Sekitar</p>
+          <h3 class="text-2xl font-bold text-white mt-1" id="kTemp">-- °C</h3>
+          <p class="text-xs mt-1 text-slate-300" id="kTempS">Optimal (18 - 26°C)</p>
+        </div>
+        <div class="p-3 bg-slate-700/30 text-slate-300 rounded-lg border border-slate-600/30"><i class="fa-solid fa-temperature-half text-xl"></i></div>
+      </div>
+      <div class="w-full bg-slate-800 h-1.5 rounded-full mt-3 overflow-hidden"><div id="bTemp" class="bg-slate-300 h-full rounded-full transition-all duration-500" style="width:0"></div></div>
+    </div>
+    <div class="glass-panel p-4 rounded-xl">
+      <div class="flex justify-between items-start">
+        <div>
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Kelembapan Udara</p>
+          <h3 class="text-2xl font-bold text-white mt-1" id="kHum">-- %</h3>
+          <p class="text-xs mt-1 text-slate-300" id="kHumS">Normal (55 - 75%)</p>
+        </div>
+        <div class="p-3 bg-indigo-500/10 text-indigo-300 rounded-lg border border-indigo-500/20"><i class="fa-solid fa-wind text-xl"></i></div>
+      </div>
+      <div class="w-full bg-slate-800 h-1.5 rounded-full mt-3 overflow-hidden"><div id="bHum" class="bg-indigo-300 h-full rounded-full transition-all duration-500" style="width:0"></div></div>
+    </div>
+    <div class="glass-panel p-4 rounded-xl">
+      <div class="flex justify-between items-start">
+        <div>
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Status Pompa</p>
+          <h3 class="text-2xl font-bold text-slate-300 mt-1" id="kSys">OFF</h3>
+        </div>
+        <div class="p-3 bg-purple-500/10 text-purple-300 rounded-lg border border-purple-500/20"><i class="fa-solid fa-faucet-drip text-xl"></i></div>
+      </div>
+      <p class="text-[10px] text-slate-500 mt-4" id="kUpd">Update terakhir: -</p>
+    </div>
+  </div>
+ 
+  <!-- REALTIME TABLE -->
+  <div class="glass-panel p-5 rounded-xl">
+    <div class="flex justify-between items-center mb-3">
+      <h3 class="text-sm font-semibold text-white flex items-center gap-2"><i class="fa-solid fa-table text-purple-400"></i> Data Real-time <span class="text-[11px] text-slate-500 font-normal">(15 pembacaan terakhir)</span></h3>
+      <span class="flex items-center gap-1.5 text-[10px] bg-purple-500/10 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded-full font-semibold"><i class="fa-solid fa-circle text-[6px] animate-pulse"></i> LIVE</span>
+    </div>
+    <div class="overflow-x-auto custom-scrollbar max-h-80">
+      <table class="w-full text-left text-xs text-slate-300">
+        <thead class="bg-slate-800/80 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-700 sticky top-0">
+          <tr><th class="p-3">Waktu</th><th class="p-3">Soil Moisture (%)</th><th class="p-3">Suhu (°C)</th><th class="p-3">Kelembapan Udara (%)</th><th class="p-3">Pompa</th><th class="p-3">Status</th></tr>
+        </thead>
+        <tbody id="rtBody" class="divide-y divide-slate-800"><tr><td colspan="6" class="p-3 text-slate-500">Menunggu data...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+ 
+  <!-- LIVE CHARTS -->
+  <div>
+    <h3 class="text-sm font-semibold text-white mb-3 flex items-center gap-2"><i class="fa-solid fa-chart-line text-purple-400"></i> Grafik Data Real-time <span class="text-[11px] text-slate-500 font-normal">(berjalan terus sesuai data masuk)</span></h3>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div class="glass-panel p-5 rounded-xl"><h4 class="text-xs font-semibold text-white mb-3"><i class="fa-solid fa-droplet text-purple-400 mr-1"></i> Soil Moisture (%)</h4><div class="relative h-56"><canvas id="cSoil"></canvas></div></div>
+      <div class="glass-panel p-5 rounded-xl"><h4 class="text-xs font-semibold text-white mb-3"><i class="fa-solid fa-temperature-half text-slate-300 mr-1"></i> Suhu Sekitar (°C)</h4><div class="relative h-56"><canvas id="cTemp"></canvas></div></div>
+      <div class="glass-panel p-5 rounded-xl"><h4 class="text-xs font-semibold text-white mb-3"><i class="fa-solid fa-wind text-indigo-300 mr-1"></i> Kelembapan Udara (%)</h4><div class="relative h-56"><canvas id="cHum"></canvas></div></div>
+      <div class="glass-panel p-5 rounded-xl">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <h4 class="text-xs font-semibold text-white"><i class="fa-solid fa-seedling text-purple-300 mr-1"></i> Perkembangan Tingkat Kematangan sejak Awal Tanam</h4>
+          <div class="flex flex-wrap items-center gap-2 text-xs">
+            <label class="text-slate-400">Tanggal tanam:</label>
+            <input id="plantDate" type="date" class="inp" onchange="onPlantDate()">
+            <span id="growBadge" class="px-2.5 py-1 rounded-full border border-purple-500/30 bg-purple-500/10 text-purple-300 font-semibold">-</span>
+          </div>
+        </div>
+        <div class="relative h-64"><canvas id="cGrow"></canvas></div>
+        <p class="text-[11px] text-slate-500 mt-2">Garis ungu = kematangan aktual sejak tanam (naik terus mengikuti umur tanaman), garis putus-putus = proyeksi sampai panen HST 42. Kurva berbentuk S (lambat &ndash; cepat &ndash; melandai) sebagai pendekatan pertumbuhan selada.</p>
+      </div>
+    </div>
+  </div>
+</section>
+ 
+<!-- ================= CAMERA ================= -->
+<section id="tab-camera" class="tab hidden space-y-6">
+  <div>
+    <h2 class="text-lg font-bold text-white">Camera ESP-32</h2>
+    <p class="text-xs text-slate-400">Live stream dari ESP32-CAM</p>
+  </div>
+  <div class="glass-panel p-5 rounded-xl space-y-4">
+    <div class="flex flex-wrap items-center gap-2 text-xs">
+      <label class="text-slate-400">IP ESP32-CAM:</label>
+      <input id="camIp" class="inp w-48 font-mono" value="192.168.1.100" placeholder="192.168.1.100">
+      <label class="text-slate-400">Port:</label>
+      <input id="camPort" class="inp w-20 font-mono" value="81">
+      <label class="text-slate-400">Path:</label>
+      <input id="camPath" class="inp w-24 font-mono" value="/stream">
+      <button onclick="camConnect()" class="bg-purple-600 hover:bg-purple-500 text-white px-3 py-1.5 rounded-lg font-medium cursor-pointer"><i class="fa-solid fa-plug mr-1"></i> Connect</button>
+      <button onclick="camDisconnect()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-lg font-medium cursor-pointer">Putuskan</button>
+      <button onclick="camFullscreen()" class="bg-purple-900/60 hover:bg-purple-800 text-purple-200 border border-purple-600/50 px-3 py-1.5 rounded-lg cursor-pointer"><i class="fa-solid fa-expand mr-1"></i> Layar Penuh</button>
+    </div>
+    <p class="text-[11px] text-slate-500">URL stream: <span id="camUrlShow" class="font-mono text-slate-400">-</span>. Bisa juga isi kolom IP dengan URL lengkap (diawali http://).</p>
+    <div id="camBox" class="relative bg-slate-950 rounded-lg overflow-hidden border border-slate-800 w-full aspect-video flex items-center justify-center">
+      <img id="camImg" alt="ESP32-CAM" class="hidden w-full h-full object-contain" onerror="camError()" onload="camOk()">
+      <div id="camFallback" class="flex flex-col items-center text-center px-4">
+        <i class="fa-solid fa-video-slash text-5xl text-purple-300/70"></i>
+        <span class="text-xs text-slate-300 mt-3" id="camStatus">Kamera belum terhubung. Masukkan IP lalu klik Connect.</span>
+      </div>
+      <span id="camLive" class="hidden absolute top-3 left-3 flex items-center gap-1.5 text-[10px] bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-0.5 rounded-full font-semibold animate-pulse"><i class="fa-solid fa-circle text-[6px]"></i> LIVE</span>
+      <button onclick="camFullscreen()" class="absolute bottom-3 right-3 bg-slate-900/80 hover:bg-slate-800 text-white text-xs px-3 py-1.5 rounded-lg border border-slate-700 cursor-pointer"><i class="fa-solid fa-expand"></i></button>
+    </div>
+    <p class="text-[11px] text-slate-500">Catatan: browser memblokir stream http dari halaman https (mixed content). Buka file ini langsung dari komputer (file://) atau dari server http lokal. Tekan Esc untuk keluar layar penuh.</p>
+  </div>
+</section>
+ 
+<!-- ================= LSTM ================= -->
+<section id="tab-lstm" class="tab hidden space-y-6">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h2 class="text-lg font-bold text-white">LSTM &mdash; Prediksi 4 Hari ke Depan</h2>
+      <p class="text-xs text-slate-400">Prediksi mikroklimat menuju panen (42 HST)</p>
+    </div>
+    <div class="flex flex-wrap items-center gap-2 text-xs">
+      <label class="text-slate-400">Umur tanaman saat ini (HST):</label>
+      <input id="hstNow" type="number" min="1" max="41" value="38" class="inp w-16">
+      <button onclick="runLSTM()" class="bg-purple-600 hover:bg-purple-500 text-white px-3 py-1.5 rounded-lg font-medium cursor-pointer"><i class="fa-solid fa-wand-magic-sparkles mr-1"></i> Jalankan Prediksi</button>
+    </div>
+  </div>
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-4" id="lstmCards"></div>
+  <div class="glass-panel p-5 rounded-xl">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+      <div class="flex items-center gap-3">
+        <div class="p-2.5 bg-purple-500/10 text-purple-300 rounded-xl border border-purple-500/30"><i class="fa-solid fa-brain text-lg"></i></div>
+        <div>
+          <h3 class="text-sm font-bold text-white">Prediksi Pertumbuhan 4 Hari ke Depan</h3>
+          <p class="text-[11px] text-slate-400" id="lstmSub">Hasil analisis model LSTM berdasarkan data sensor terakhir.</p>
+        </div>
+      </div>
+      <button onclick="runLSTM()" class="text-xs text-purple-300 hover:text-white font-medium cursor-pointer"><i class="fa-solid fa-rotate mr-1"></i> Muat Ulang</button>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" id="lstmDays"></div>
+    <p class="text-[11px] text-slate-500 mt-4">Persentase = progres kematangan menuju panen (HST 42), dipercepat/diperlambat oleh faktor pertumbuhan hasil prediksi mikroklimat. Prediksi masih simulasi; ganti <span class="font-mono">lstmPredict()</span> dengan inferensi model LSTM terlatih Anda.</p>
+  </div>
+</section>
+ 
+<!-- ================= CNN ================= -->
+<section id="tab-cnn" class="tab hidden space-y-6">
+  <div>
+    <h2 class="text-lg font-bold text-white">CNN &mdash; Tingkat Kematangan Selada</h2>
+    <p class="text-xs text-slate-400">Upload foto daun selada, sistem mengukur lebar daun dan memprediksi fase panen</p>
+  </div>
+  <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+    <div class="glass-panel p-5 rounded-xl space-y-4">
+      <h3 class="text-sm font-semibold text-white"><i class="fa-solid fa-upload text-purple-300 mr-1"></i> Upload Gambar</h3>
+      <label for="fileIn" class="block border-2 border-dashed border-slate-700 hover:border-purple-500 rounded-xl p-4 text-center cursor-pointer transition">
+        <i class="fa-solid fa-cloud-arrow-up text-3xl text-purple-300"></i>
+        <p class="text-xs text-slate-300 mt-2">Klik untuk pilih foto selada</p>
+        <p class="text-[10px] text-slate-500">JPG / PNG</p>
+      </label>
+      <input id="fileIn" type="file" accept="image/*" class="hidden" onchange="loadImage(event)">
+      <div class="grid grid-cols-2 gap-2">
+        <div><p class="text-[10px] text-slate-500 mb-1">Gambar asli</p><canvas id="cvOrig" class="w-full rounded-lg bg-slate-900 border border-slate-800"></canvas></div>
+        <div><p class="text-[10px] text-slate-500 mb-1">Segmentasi daun</p><canvas id="cvMask" class="w-full rounded-lg bg-slate-900 border border-slate-800"></canvas></div>
+      </div>
+      <p class="text-[10px] text-slate-500 leading-relaxed">Warna segmentasi: <span class="text-green-400">hijau</span> sehat &bull; <span class="text-yellow-300">kuning</span> menguning &bull; <span class="text-amber-600">cokelat</span> nekrosis &bull; <span class="text-red-500">merah</span> bercak gelap &bull; <span class="text-sky-400">biru</span> lubang</p>
+      <button onclick="clearCNN()" class="w-full bg-slate-700 hover:bg-red-700 text-white text-xs font-medium py-2 rounded-lg transition cursor-pointer"><i class="fa-solid fa-trash mr-1"></i> Hapus Gambar</button>
+    </div>
+ 
+    <div class="xl:col-span-2 space-y-6">
+      <div class="glass-panel p-5 rounded-xl space-y-4">
+        <div class="flex flex-wrap justify-between items-center gap-2">
+          <h3 class="text-sm font-semibold text-white"><i class="fa-solid fa-chart-column text-purple-300 mr-1"></i> Prediksi Tingkat Kematangan</h3>
+          <span id="cnnBadge" class="text-sm font-bold bg-slate-700/40 text-slate-300 px-3 py-1 rounded-full border border-slate-600/40">Belum ada gambar</span>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="relative h-56"><canvas id="cCNN"></canvas></div>
+          <div class="space-y-3 text-xs">
+            <div class="bg-slate-900 p-3 rounded-lg border border-slate-800">
+              <span class="text-slate-400 block">Lebar daun terukur</span>
+              <span class="text-2xl font-bold text-white" id="leafW">-- cm</span>
+              <p class="text-[11px] text-slate-500 mt-1" id="leafPx">-</p>
+            </div>
+            <div class="bg-slate-900 p-3 rounded-lg border border-slate-800 space-y-2" id="cnnPct">
+              <p class="text-slate-500">Persentase akan tampil setelah upload.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+ 
+      <div class="glass-panel p-5 rounded-xl space-y-4">
+        <div class="flex flex-wrap justify-between items-center gap-2">
+          <h3 class="text-sm font-semibold text-white"><i class="fa-solid fa-bug text-purple-300 mr-1"></i> Deteksi Hama &amp; Penyakit</h3>
+          <span id="dzBadge" class="text-xs font-bold bg-slate-700/40 text-slate-300 px-3 py-1 rounded-full border border-slate-600/40">Belum ada gambar</span>
+        </div>
+        <div id="dzList" class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs"><p class="text-slate-500">Hasil deteksi akan tampil setelah upload gambar.</p></div>
+        <p class="text-[11px] text-slate-500">Deteksi berbasis analisis warna &amp; bentuk daun (menguning, cokelat, bercak gelap, lubang). Ini perkiraan awal, bukan diagnosa pasti; pastikan dengan pengamatan langsung.</p>
+      </div>
+    </div>
+  </div>
+</section>
+ 
+<!-- ================= HISTORY ================= -->
+<section id="tab-history" class="tab hidden space-y-6">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h2 class="text-lg font-bold text-white">History</h2>
+      <p class="text-xs text-slate-400">Riwayat data sensor dan hasil analisis CNN (tersimpan di browser)</p>
+    </div>
+    <div class="flex items-center gap-2 text-xs">
+      <input id="histSearch" onkeyup="renderHistory()" class="inp w-48" placeholder="Cari...">
+      <button onclick="exportCSV()" class="bg-purple-600 hover:bg-purple-500 text-white px-3 py-1.5 rounded-lg font-medium cursor-pointer"><i class="fa-solid fa-file-csv mr-1"></i> Export CSV</button>
+      <button onclick="clearHistory()" class="bg-slate-700 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg font-medium cursor-pointer"><i class="fa-solid fa-trash mr-1"></i> Hapus</button>
+    </div>
+  </div>
+  <div class="flex gap-2 text-xs">
+    <button id="hb-sensor" onclick="histTab('sensor')" class="px-4 py-2 rounded-lg bg-purple-600 text-white font-semibold cursor-pointer">Data Sensor</button>
+    <button id="hb-cnn" onclick="histTab('cnn')" class="px-4 py-2 rounded-lg text-slate-400 hover:text-white font-semibold cursor-pointer">Hasil CNN</button>
+  </div>
+  <div class="glass-panel p-5 rounded-xl">
+    <div class="overflow-x-auto custom-scrollbar max-h-[65vh]">
+      <table class="w-full text-left text-xs text-slate-300">
+        <thead id="histHead" class="bg-slate-800/80 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-700 sticky top-0"></thead>
+        <tbody id="histBody" class="divide-y divide-slate-800"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+ 
+</main>
+ 
+<script>
+/* ============ UTIL ============ */
+const $=id=>document.getElementById(id);
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const sig=x=>1/(1+Math.exp(-x));
+const nowStr=()=>new Date().toLocaleString('id-ID',{hour12:false});
+const load=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))||d}catch(e){return d}};
+const save=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
+const GRID='rgba(51,65,85,.3)', TICK='#94a3b8';
+function toggleSidebar(){$('sidebar').classList.toggle('-translate-x-full');$('overlay').classList.toggle('hidden')}
+ 
+/* ============ TABS ============ */
+function switchTab(t){
+  document.querySelectorAll('.tab').forEach(e=>e.classList.add('hidden'));
+  $('tab-'+t).classList.remove('hidden');
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  $('nav-'+t).classList.add('active');
+  if(!$('sidebar').classList.contains('-translate-x-full') && window.innerWidth<1024) toggleSidebar();
+  setTimeout(()=>Object.values(charts).forEach(c=>c&&c.resize()),60);
+  if(t==='history') renderHistory();
+  if(t==='lstm' && !lastForecast) runLSTM();
+}
+ 
+/* ============ STATE ============ */
+const S={soil:68,temp:23,hum:65,pump:false,mode:'auto',source:'sim',tick:0};
+const charts={};
+const MAXPTS=40;
+ 
+/* ============ LIVE CHARTS ============ */
+function lineOpts(legend){return{responsive:true,maintainAspectRatio:false,animation:{duration:300},interaction:{mode:'index',intersect:false},
+  plugins:{legend:{display:!!legend,labels:{color:TICK,font:{size:10}}},tooltip:{backgroundColor:'#0f172a',titleColor:'#e2e8f0',bodyColor:'#cbd5e1',borderColor:'#334155',borderWidth:1}},
+  scales:{x:{ticks:{color:TICK,font:{size:9},maxTicksLimit:8},grid:{color:GRID}},y:{ticks:{color:TICK,font:{size:10}},grid:{color:GRID}}}}}
+function mkLive(id,label,color){
+  return new Chart($(id),{type:'line',data:{labels:[],datasets:[{label,data:[],borderColor:color,backgroundColor:color+'22',fill:true,tension:.3,pointRadius:0,borderWidth:2}]},options:lineOpts(false)});
+}
+function initLiveCharts(){
+  charts.soil=mkLive('cSoil','Soil Moisture (%)','#c084fc');
+  charts.temp=mkLive('cTemp','Suhu (°C)','#cbd5e1');
+  charts.hum=mkLive('cHum','Kelembapan (%)','#818cf8');
+}
+function initGrowChart(){
+  const labels=Array.from({length:HARVEST+1},(_,i)=>'HST '+i);
+  const o=lineOpts(true);
+  o.scales.y={min:0,max:100,ticks:{color:TICK,font:{size:10},callback:v=>v+'%'},grid:{color:GRID}};
+  o.scales.x.ticks.maxTicksLimit=11;
+  charts.grow=new Chart($('cGrow'),{type:'line',data:{labels,datasets:[
+    {label:'Kematangan aktual (%)',data:[],borderColor:'#a855f7',backgroundColor:'#a855f733',fill:true,tension:.35,pointRadius:0,borderWidth:2.5},
+    {label:'Proyeksi menuju panen (%)',data:[],borderColor:'#94a3b8',borderDash:[5,5],tension:.35,pointRadius:0,borderWidth:1.5}]},options:o});
+}
+const HARVEST=42;
+function maturityAt(h){
+  const L=x=>1/(1+Math.exp(-(x-21)/6.5)), a=L(0), b=L(HARVEST);
+  return clamp((L(clamp(h,0,HARVEST))-a)/(b-a)*100,0,100);
+}
+function getHST(){
+  const v=$('plantDate').value; if(!v) return 0;
+  const d=new Date(v+'T00:00:00'); return Math.max(0,(Date.now()-d.getTime())/86400000);
+}
+function updateGrowth(){
+  if(!charts.grow) return;
+  const hst=getHST(), cur=Math.min(hst,HARVEST), day=Math.floor(cur);
+  const act=[],pro=[];
+  for(let i=0;i<=HARVEST;i++){
+    act.push(i<day?+maturityAt(i).toFixed(1):i===day?+maturityAt(cur).toFixed(2):null);
+    pro.push(i>=day?+(i===day?maturityAt(cur):maturityAt(i)).toFixed(1):null);
+  }
+  charts.grow.data.datasets[0].data=act; charts.grow.data.datasets[1].data=pro; charts.grow.update('none');
+  const m=maturityAt(cur), ph=m>=90?'Siap Panen':m>=70?'Mendekati Panen':'Masa Pertumbuhan';
+  $('growBadge').textContent=`HST ${Math.floor(hst)} \u2022 ${m.toFixed(1)}% \u2022 ${ph}`;
+}
+function onPlantDate(){
+  const v=$('plantDate').value; if(v) save('plant_date',v);
+  const h=clamp(Math.floor(getHST()),1,41); $('hstNow').value=h;
+  if(typeof lastForecast!=='undefined'&&lastForecast) runLSTM();
+  updateGrowth();
+}
+function pushLive(){
+  const lab=new Date().toLocaleTimeString('id-ID',{hour12:false});
+  const add=(c,vals)=>{c.data.labels.push(lab);vals.forEach((v,i)=>c.data.datasets[i].data.push(v));
+    if(c.data.labels.length>MAXPTS){c.data.labels.shift();c.data.datasets.forEach(d=>d.data.shift())}c.update('none')};
+  add(charts.soil,[S.soil]);add(charts.temp,[S.temp]);add(charts.hum,[S.hum]);
+  pushRT(lab); updateGrowth();
+}
+const rtRows=[];
+function pushRT(lab){
+  const bad=[stat(S.soil,60,80),stat(S.temp,18,26),stat(S.hum,55,75)].filter(x=>x!=='ok').length;
+  rtRows.unshift({t:lab,soil:S.soil,temp:S.temp,hum:S.hum,pump:S.pump,mode:S.mode,bad});
+  if(rtRows.length>15) rtRows.pop();
+  $('rtBody').innerHTML=rtRows.map((r,i)=>`<tr class="${i===0?'bg-purple-500/5':''} hover:bg-slate-800/50"><td class="p-3 font-medium text-white">${r.t}</td><td class="p-3">${r.soil.toFixed(1)}</td><td class="p-3">${r.temp.toFixed(1)}</td><td class="p-3">${r.hum.toFixed(1)}</td><td class="p-3 ${r.pump?'text-purple-300 font-semibold':''}">${r.pump?'ON':'OFF'}</td><td class="p-3"><span class="px-2 py-0.5 rounded border text-[10px] ${r.bad===0?'bg-purple-500/10 text-purple-300 border-purple-500/20':r.bad===1?'bg-yellow-500/10 text-yellow-300 border-yellow-500/20':'bg-red-500/10 text-red-300 border-red-500/20'}">${r.bad===0?'Normal':r.bad===1?'Perhatian':'Peringatan'}</span></td></tr>`).join('');
+}
+ 
+/* ============ SENSOR SOURCE ============ */
+function changeSource(){
+  S.source=$('srcMode').value;
+  $('srcBadge').textContent=S.source==='sim'?'Simulasi':'Menghubungkan ESP32...';
+}
+function simStep(){
+  const t=Date.now()/1000;
+  S.temp=clamp(23+2.5*Math.sin(t/60)+(Math.random()-.5)*.4,15,35);
+  S.hum=clamp(65-6*Math.sin(t/60)+(Math.random()-.5)*1.2,30,95);
+  S.soil=clamp(S.soil+(S.pump?1.4:-0.35)+(Math.random()-.5)*.3,20,95);
+}
+async function pollESP(){
+  const ip=$('espIp').value.trim(); if(!ip) return false;
+  const url=ip.startsWith('http')?ip:`http://${ip}/data`;
+  const ctl=new AbortController(); const to=setTimeout(()=>ctl.abort(),1800);
+  try{
+    const r=await fetch(url,{signal:ctl.signal}); const j=await r.json(); clearTimeout(to);
+    if(typeof j.soil==='number') S.soil=j.soil;
+    if(typeof j.temp==='number') S.temp=j.temp;
+    if(typeof j.hum==='number') S.hum=j.hum;
+    $('srcBadge').textContent='ESP32 Online'; return true;
+  }catch(e){clearTimeout(to);$('srcBadge').textContent='ESP32 Offline';return false}
+}
+ 
+/* ============ PUMP ============ */
+function sendPump(on){
+  if(S.source!=='esp') return;
+  const ip=$('espIp').value.trim(); if(!ip) return;
+  const base=ip.startsWith('http')?ip.replace(/\/data.*$/,''):`http://${ip}`;
+  fetch(`${base}/pump?state=${on?'on':'off'}`,{mode:'no-cors'}).catch(()=>{});
+}
+const TH_ON=60, TH_OFF=72; let pumpNote='';
+function setPump(on,reason){
+  if(S.pump===on) return;
+  S.pump=on; sendPump(on);
+  pumpNote=reason+' ('+new Date().toLocaleTimeString('id-ID',{hour12:false})+')';
+  renderPump();
+}
+function autoPump(){
+  if(!S.pump && S.soil<TH_ON) setPump(true,`soil ${S.soil.toFixed(1)}% < ${TH_ON}%`);
+  else if(S.pump && S.soil>=TH_OFF) setPump(false,`soil ${S.soil.toFixed(1)}% ≥ ${TH_OFF}%`);
+}
+function renderPump(){
+  $('kSys').textContent=S.pump?'ON':'OFF';
+  $('kSys').className='text-2xl font-bold mt-1 '+(S.pump?'text-purple-300 animate-pulse':'text-slate-300');
+}
+ 
+/* ============ UI UPDATE ============ */
+function stat(v,lo,hi){return v<lo?'low':v>hi?'high':'ok'}
+function updateKPI(){
+  $('kSoil').textContent=S.soil.toFixed(1)+' %'; $('bSoil').style.width=clamp(S.soil,0,100)+'%';
+  $('kTemp').textContent=S.temp.toFixed(1)+' °C'; $('bTemp').style.width=clamp(S.temp/40*100,0,100)+'%';
+  $('kHum').textContent=S.hum.toFixed(1)+' %'; $('bHum').style.width=clamp(S.hum,0,100)+'%';
+  const a=stat(S.soil,60,80), b=stat(S.temp,18,26), c=stat(S.hum,55,75);
+  $('kSoilS').textContent=a==='ok'?'Ideal (60 - 80%)':a==='low'?'Terlalu kering':'Terlalu basah';
+  $('kTempS').textContent=b==='ok'?'Optimal (18 - 26°C)':b==='low'?'Terlalu dingin':'Terlalu panas';
+  $('kHumS').textContent=c==='ok'?'Normal (55 - 75%)':c==='low'?'Terlalu kering':'Terlalu lembap';
+  $('kUpd').textContent='Update terakhir: '+new Date().toLocaleTimeString('id-ID',{hour12:false});
+}
+ 
+/* ============ MAIN LOOP ============ */
+async function loop(){
+  S.tick++;
+  if(S.source==='sim'){simStep();$('srcBadge').textContent='Simulasi'}
+  else await pollESP();
+  autoPump(); updateKPI(); pushLive();
+  if(S.tick%5===0){
+    const h=load('hist_sensor',[]); h.push({t:nowStr(),soil:+S.soil.toFixed(1),temp:+S.temp.toFixed(1),hum:+S.hum.toFixed(1),pump:S.pump?'ON':'OFF',mode:S.mode});
+    while(h.length>500) h.shift(); save('hist_sensor',h);
+  }
+  setTimeout(loop,2000);
+}
+ 
+/* ============ CAMERA ============ */
+function camUrl(){
+  const ip=$('camIp').value.trim();
+  if(ip.startsWith('http')) return ip;
+  const port=$('camPort').value.trim(), path=$('camPath').value.trim()||'/stream';
+  return `http://${ip}${port?':'+port:''}${path.startsWith('/')?path:'/'+path}`;
+}
+function camConnect(){
+  const url=camUrl(); $('camUrlShow').textContent=url;
+  save('cam_cfg',{ip:$('camIp').value,port:$('camPort').value,path:$('camPath').value});
+  $('camStatus').textContent='Menghubungkan ke kamera...';
+  $('camImg').src=url+(url.includes('?')?'&':'?')+'t='+Date.now();
+  $('camImg').classList.remove('hidden'); $('camFallback').classList.add('hidden');
+}
+function camOk(){$('camLive').classList.remove('hidden')}
+function camError(){
+  $('camImg').classList.add('hidden'); $('camFallback').classList.remove('hidden'); $('camLive').classList.add('hidden');
+  $('camStatus').textContent='Gagal terhubung ke kamera. Periksa IP, port, dan jaringan.';
+}
+function camDisconnect(){
+  $('camImg').removeAttribute('src'); $('camImg').classList.add('hidden'); $('camFallback').classList.remove('hidden'); $('camLive').classList.add('hidden');
+  $('camStatus').textContent='Kamera diputuskan.';
+}
+function camFullscreen(){
+  const el=$('camBox');
+  if(document.fullscreenElement) document.exitFullscreen();
+  else if(el.requestFullscreen) el.requestFullscreen();
+}
+ 
+/* ============ LSTM (simulasi) ============ */
+let lastForecast=null;
+function recentAvg(){
+  const h=load('hist_sensor',[]).slice(-60);
+  if(h.length<3) return {soil:S.soil,temp:S.temp,hum:S.hum};
+  const m=k=>h.reduce((a,b)=>a+b[k],0)/h.length;
+  return {soil:m('soil'),temp:m('temp'),hum:m('hum')};
+}
+/* Ganti fungsi ini dengan inferensi model LSTM terlatih Anda.
+   Output: array 16 titik {day,hour,soil,temp,hum} (4 hari x 4 jam). */
+function lstmPredict(hst0){
+  const base=recentAvg(), out=[]; const hours=[6,12,18,24];
+  for(let d=1;d<=4;d++){
+    hours.forEach((hr,i)=>{
+      const phase=(hr-6)/24*2*Math.PI;
+      const temp=base.temp+2.8*Math.sin(phase)+0.15*d+0.25*Math.sin(d*3+i);
+      const hum=base.hum-6*Math.sin(phase)+0.3*Math.cos(d*2+i);
+      const soil=base.soil-1.2*Math.sin(phase)+0.4*Math.sin(d*2.3+i);
+      out.push({day:hst0+d,hour:hr,soil:clamp(soil,20,95),temp:clamp(temp,15,38),hum:clamp(hum,30,95)});
+    });
+  }
+  return out;
+}
+function growthFactor(soil,temp,hum){
+  const f=(v,lo,hi,w)=>v<lo?clamp(1-(lo-v)/w,.2,1):v>hi?clamp(1-(v-hi)/w,.2,1):1;
+  return +(f(soil,60,80,25)*f(temp,18,26,10)*f(hum,55,75,25)).toFixed(2);
+}
+function runLSTM(){
+  const hst0=clamp(parseInt($('hstNow').value)||38,1,41);
+  const pts=lstmPredict(hst0); const days=[];
+  for(let d=1;d<=4;d++){
+    const p=pts.filter(x=>x.day===hst0+d);
+    const avg=k=>p.reduce((a,b)=>a+b[k],0)/p.length;
+    const soil=avg('soil'),hum=avg('hum'),tmax=Math.max(...p.map(x=>x.temp));
+    const gf=growthFactor(soil,tmax-1.5,hum);
+    const risk=gf>=.9?'Rendah':gf>=.7?'Sedang':'Tinggi';
+    days.push({hst:hst0+d,soil,temp:tmax,hum,gf,risk});
+  }
+  lastForecast={hst0,pts,days};
+  // cards
+  const avgSoil=days.reduce((a,b)=>a+b.soil,0)/4, maxT=Math.max(...days.map(d=>d.temp));
+  const cards=[
+    ['Tren Soil Moisture',avgSoil.toFixed(1)+' %',avgSoil<60?'Berpotensi kering':'Stabil'],
+    ['Puncak Suhu',maxT.toFixed(1)+' °C',maxT>26?'Aktifkan shading/misting':'Aman'],
+    ['Rata-rata Faktor Tumbuh',(days.reduce((a,b)=>a+b.gf,0)/4).toFixed(2),'1.00 = kondisi ideal'],
+    ['Target Panen','HST '+HARVEST,`${HARVEST-hst0} hari lagi dari HST ${hst0}`]];
+  $('lstmCards').innerHTML=cards.map(c=>`<div class="bg-slate-900 p-3.5 rounded-lg border border-slate-800 text-xs"><span class="text-slate-400 block">${c[0]}</span><span class="text-purple-300 font-semibold text-lg mt-1 block">${c[1]}</span><p class="text-slate-500 text-[11px] mt-1">${c[2]}</p></div>`).join('');
+  renderLSTMDays(hst0,days);
+}
+ 
+function lstmPhase(p){return p>=90?'Siap Panen':p>=70?'Mendekati Panen':'Masa Pertumbuhan'}
+const getLstmImgs=()=>{const a=load('lstm_imgs',[]);return [0,1,2,3].map(i=>a[i]||null)};
+function rerenderLSTM(){if(lastForecast) renderLSTMDays(lastForecast.hst0,lastForecast.days)}
+function setLstmImg(i,ev){
+  const f=ev.target.files[0]; if(!f) return;
+  const img=new Image(), url=URL.createObjectURL(f);
+  img.onload=()=>{
+    const sc=Math.min(1,480/img.width), c=document.createElement('canvas');
+    c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc);
+    c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+    const a=getLstmImgs(); a[i]=c.toDataURL('image/jpeg',.75); save('lstm_imgs',a);
+    URL.revokeObjectURL(url); rerenderLSTM();
+  };
+  img.src=url;
+}
+function delLstmImg(i,ev){
+  ev.preventDefault(); ev.stopPropagation();
+  const a=getLstmImgs(); a[i]=null; save('lstm_imgs',a); rerenderLSTM();
+}
+function renderLSTMDays(hst0,days){
+  const n=Math.min(300,load('hist_sensor',[]).length);
+  $('lstmSub').textContent=`Hasil analisis model LSTM berdasarkan ${n>0?n:'data'} data sensor terakhir.`;
+  let eff=hst0; const imgs=getLstmImgs();
+  $('lstmDays').innerHTML=days.map((d,i)=>{
+    eff+=d.gf; const pct=maturityAt(eff), ph=lstmPhase(pct);
+    const badge=ph==='Siap Panen'?'bg-purple-500/20 text-purple-200 border-purple-400/40':ph==='Mendekati Panen'?'bg-indigo-500/15 text-indigo-200 border-indigo-400/30':'bg-slate-700/40 text-slate-200 border-slate-500/40';
+    return `<div class="bg-slate-900/70 border border-purple-500/20 rounded-xl p-3.5 space-y-2.5">
+      <div class="flex justify-between items-start">
+        <div><p class="text-[10px] uppercase tracking-wider text-slate-400">Hari ke-${d.hst}${d.hst===HARVEST?' (Panen)':''}</p><p class="text-2xl font-bold text-purple-300 mt-0.5">${pct.toFixed(1)}%</p></div>
+        <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full border ${badge}">${ph}</span>
+      </div>
+      <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden"><div class="bg-purple-400 h-full rounded-full" style="width:${pct}%"></div></div>
+      <label class="relative block h-32 rounded-lg overflow-hidden border ${imgs[i]?'border-slate-800':'border-dashed border-slate-700 hover:border-purple-500'} bg-slate-900 cursor-pointer">
+        ${imgs[i]?`<img src="${imgs[i]}" alt="Hari ${d.hst}" class="w-full h-full object-cover"><button type="button" onclick="delLstmImg(${i},event)" title="Hapus gambar" class="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-slate-900/80 hover:bg-red-700 text-white text-xs flex items-center justify-center"><i class="fa-solid fa-xmark"></i></button>`:`<div class="h-full flex flex-col items-center justify-center text-slate-500"><i class="fa-solid fa-image text-2xl text-purple-300/70"></i><span class="text-[11px] mt-1">Klik untuk upload gambar</span></div>`}
+        <input type="file" accept="image/*" class="hidden" onchange="setLstmImg(${i},event)">
+      </label>
+    </div>`;
+  }).join('');
+}
+ 
+/* ============ CNN ============ */
+const CNN_SCALE=40, CNN_T1=6, CNN_T2=9;
+let cnnState=null, cnnImg=null, cnnName='';
+function loadImage(ev){
+  const f=ev.target.files[0]; if(!f) return;
+  cnnName=f.name; const url=URL.createObjectURL(f); const img=new Image();
+  img.onload=()=>{cnnImg=img; analyzeCurrent(true)}; img.src=url;
+}
+function phaseOf(w,t1,t2){return w>=t2?'Siap Panen':w>=t1?'Mendekati Panen':'Masa Pertumbuhan'}
+function probs(w,t1,t2){
+  let g=sig((t1-w)/.8), r=sig((w-t2)/.8), n=Math.max(.001,1-g-r);
+  const s=g+n+r; return {g:g/s*100,n:n/s*100,r:r/s*100};
+}
+function rgb2hsv(r,g,b){
+  r/=255;g/=255;b/=255; const mx=Math.max(r,g,b), mn=Math.min(r,g,b), d=mx-mn; let h=0;
+  if(d){ if(mx===r) h=((g-b)/d)%6; else if(mx===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0) h+=360; }
+  return [h, mx?d/mx:0, mx];
+}
+function dilate(m,W,H,r){
+  const t=new Uint8Array(W*H), o=new Uint8Array(W*H);
+  for(let y=0;y<H;y++){
+    let last=-1e9; for(let x=0;x<W;x++){ if(m[y*W+x]) last=x; if(x-last<=r) t[y*W+x]=1; }
+    last=1e9; for(let x=W-1;x>=0;x--){ if(m[y*W+x]) last=x; if(last-x<=r) t[y*W+x]=1; }
+  }
+  for(let x=0;x<W;x++){
+    let last=-1e9; for(let y=0;y<H;y++){ if(t[y*W+x]) last=y; if(y-last<=r) o[y*W+x]=1; }
+    last=1e9; for(let y=H-1;y>=0;y--){ if(t[y*W+x]) last=y; if(last-y<=r) o[y*W+x]=1; }
+  }
+  return o;
+}
+function setBar(vals){
+  if(!charts.cnn){
+    charts.cnn=new Chart($('cCNN'),{type:'bar',data:{labels:['Masa Pertumbuhan','Mendekati Panen','Siap Panen'],datasets:[{data:[0,0,0],backgroundColor:['#64748b','#818cf8','#a855f7'],borderRadius:6}]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.parsed.y.toFixed(1)+'%'}}},scales:{x:{ticks:{color:TICK,font:{size:10}},grid:{display:false}},y:{min:0,max:100,ticks:{color:TICK,callback:v=>v+'%'},grid:{color:GRID}}}}});
+  }
+  charts.cnn.data.datasets[0].data=vals; charts.cnn.update();
+}
+const BADGE_BASE='text-sm font-bold px-3 py-1 rounded-full border ';
+const BADGE_NEUTRAL=BADGE_BASE+'bg-slate-700/40 text-slate-300 border-slate-600/40';
+function resetCNNUI(){
+  $('leafW').textContent='-- cm'; $('leafPx').textContent='-';
+  $('cnnBadge').textContent='Belum ada gambar'; $('cnnBadge').className=BADGE_NEUTRAL;
+  $('cnnPct').innerHTML='<p class="text-slate-500">Persentase akan tampil setelah upload.</p>';
+  $('dzBadge').textContent='Belum ada gambar'; $('dzBadge').className=BADGE_NEUTRAL;
+  $('dzList').innerHTML='<p class="text-slate-500">Hasil deteksi akan tampil setelah upload gambar.</p>';
+  setBar([0,0,0]);
+}
+function clearCNN(){
+  cnnImg=null; cnnState=null; cnnName='';
+  $('fileIn').value='';
+  ['cvOrig','cvMask'].forEach(id=>{const c=$(id); c.width=480; c.height=270; c.getContext('2d').clearRect(0,0,480,270);});
+  resetCNNUI();
+}
+function diagnose(sh){
+  const lvl=v=>v>=30?'Berat':v>=15?'Sedang':'Ringan', out=[];
+  if(sh.y>=8) out.push({name:'Klorosis (daun menguning)',v:sh.y,desc:'Indikasi kekurangan nitrogen/zat besi, atau pH dan EC nutrisi tidak sesuai.',act:'Cek pH (5.5-6.5) dan EC larutan nutrisi, sesuaikan dosis nutrisi A/B.'});
+  if(sh.b>=8) out.push({name:'Tip burn / nekrosis tepi',v:sh.b,desc:'Indikasi kekurangan kalsium, suhu tinggi, atau EC terlalu tinggi.',act:'Turunkan suhu, perbaiki sirkulasi udara, pastikan suplai kalsium dan cek EC.'});
+  if(sh.d>=6) out.push({name:'Bercak gelap (jamur/bakteri)',v:sh.d,desc:'Indikasi penyakit bercak daun akibat kelembapan tinggi.',act:'Kurangi kelembapan dan percikan air ke daun, buang daun terinfeksi.'});
+  if(sh.h>=5) out.push({name:'Lubang / bagian daun hilang',v:sh.h,desc:'Indikasi serangan hama pemakan daun (ulat, siput, belalang).',act:'Periksa sisi bawah daun dan media tanam, buang hama manual, pasang jaring/perangkap.'});
+  out.forEach(o=>o.lvl=lvl(o.v));
+  return out;
+}
+function saveCNNHistory(rec){
+  const h=load('hist_cnn',[]); h.push(rec); while(h.length>200) h.shift(); save('hist_cnn',h);
+}
+function analyzeCurrent(saveIt){
+  if(!cnnImg) return;
+  const W=480, sc=W/cnnImg.width, H=Math.max(1,Math.round(cnnImg.height*sc)), N=W*H;
+  const co=$('cvOrig'), cm=$('cvMask'); co.width=cm.width=W; co.height=cm.height=H;
+  const ctx=co.getContext('2d'); ctx.drawImage(cnnImg,0,0,W,H);
+  const d=ctx.getImageData(0,0,W,H).data;
+  const cls=new Uint8Array(N), gm=new Uint8Array(N), col=new Array(W).fill(0);
+  let cg=0, hueSum=0, cother=0;
+  for(let i=0;i<N;i++){
+    const [h,s,v]=rgb2hsv(d[i*4],d[i*4+1],d[i*4+2]); let c=0;
+    if(h>=70&&h<=170&&s>=.22&&v>=.2){c=1;cg++;hueSum+=h;gm[i]=1;col[i%W]++}
+    else if(h>=38&&h<70&&s>=.35&&v>=.45) c=2;
+    else if(h>=10&&h<38&&s>=.3&&v>=.15&&v<=.65) c=3;
+    else if(v<.22) c=4;
+    else if(s>.5&&v>.3&&(h<10||h>170)){c=5;cother++}
+    cls[i]=c;
+  }
+  // zona sekitar daun & area tertutup (lubang)
+  const zone=dilate(gm,W,H,6), outside=new Uint8Array(N), st=[];
+  const push=i=>{ if(!outside[i]&&cls[i]!==1){outside[i]=1;st.push(i)} };
+  for(let x=0;x<W;x++){push(x);push((H-1)*W+x)}
+  for(let y=0;y<H;y++){push(y*W);push(y*W+W-1)}
+  while(st.length){ const i=st.pop(), x=i%W, y=(i-x)/W; if(x>0)push(i-1); if(x<W-1)push(i+1); if(y>0)push(i-W); if(y<H-1)push(i+W); }
+  // klasifikasi akhir + gambar segmentasi (warna alami, bukan tema)
+  const md=cm.getContext('2d').createImageData(W,H), m=md.data;
+  let Gc=0,Yc=0,Bc=0,Dc=0,Hc=0;
+  for(let i=0;i<N;i++){
+    const c=cls[i], enclosed=c!==1&&!outside[i], inPlant=zone[i]||enclosed;
+    let rgb=[15,23,42];
+    if(c===1){Gc++;rgb=[34,197,94]}
+    else if(inPlant){
+      if(c===2){Yc++;rgb=[250,204,21]}
+      else if(c===3){Bc++;rgb=[161,98,7]}
+      else if(c===4){Dc++;rgb=[220,38,38]}
+      else if(enclosed){Hc++;rgb=[56,189,248]}
+    }
+    m[i*4]=rgb[0];m[i*4+1]=rgb[1];m[i*4+2]=rgb[2];m[i*4+3]=255;
+  }
+  cm.getContext('2d').putImageData(md,0,0);
+ 
+  // ---- validasi: apakah ini selada? ----
+  const gRatio=cg/N, hueMean=cg?hueSum/cg:0, oRatio=cother/N;
+  let reason='';
+  if(gRatio<.03) reason='Daun hijau hampir tidak terdeteksi ('+(gRatio*100).toFixed(1)+'% area gambar).';
+  else if(hueMean<75||hueMean>150) reason='Warna hijau tidak sesuai selada (hue rata-rata '+hueMean.toFixed(0)+'°).';
+  else if(oRatio>=.35) reason='Gambar didominasi warna non-tanaman ('+(oRatio*100).toFixed(0)+'%).';
+  const xs=[]; if(!reason){ for(let x=0;x<W;x++) if(col[x]>=3) xs.push(x); if(xs.length<5) reason='Bentuk daun tidak terdeteksi.'; }
+ 
+  if(reason){
+    cnnState=null;
+    $('leafW').textContent='-- cm'; $('leafPx').textContent=reason;
+    $('cnnBadge').textContent='Bukan Selada'; $('cnnBadge').className=BADGE_BASE+'bg-amber-500/15 text-amber-200 border-amber-400/40';
+    $('cnnPct').innerHTML='<p class="text-amber-200">Objek tidak dikenali sebagai selada, prediksi kematangan dilewati.</p>';
+    $('dzBadge').textContent='Dilewati'; $('dzBadge').className=BADGE_BASE+'bg-amber-500/15 text-amber-200 border-amber-400/40';
+    $('dzList').innerHTML='<p class="text-amber-200">Deteksi hama &amp; penyakit dilewati karena objek bukan selada.</p><p class="text-slate-500">'+esc(reason)+' Gunakan foto selada yang jelas dan dekat.</p>';
+    setBar([0,0,0]);
+    if(saveIt===true) saveCNNHistory({t:nowStr(),file:cnnName,width:'-',phase:'Bukan selada',conf:'-',diag:'-'});
+    return;
+  }
+ 
+  // ---- kematangan berdasar lebar daun ----
+  const x1=xs[Math.floor(xs.length*.01)], x2=xs[Math.ceil(xs.length*.99)-1];
+  const pxOrig=(x2-x1)/sc, scale=CNN_SCALE;
+  const wcm=pxOrig/scale, t1=CNN_T1, t2=CNN_T2;
+  const p=probs(wcm,t1,t2), phase=phaseOf(wcm,t1,t2), top=Math.max(p.g,p.n,p.r);
+  cnnState={w:wcm,phase,p,top,t1,t2,name:cnnName};
+  $('leafW').textContent=wcm.toFixed(2)+' cm';
+  $('leafPx').textContent=`${pxOrig.toFixed(0)} px ÷ ${scale} px/cm = ${wcm.toFixed(2)} cm`;
+  $('cnnBadge').textContent=`${phase} (${top.toFixed(1)}%)`;
+  $('cnnBadge').className=BADGE_BASE+(phase==='Siap Panen'?'bg-purple-500/20 text-purple-200 border-purple-400/40':phase==='Mendekati Panen'?'bg-indigo-500/15 text-indigo-200 border-indigo-400/30':'bg-slate-700/40 text-slate-200 border-slate-500/40');
+  $('cnnPct').innerHTML=[['Masa Pertumbuhan',p.g,'#64748b'],['Mendekati Panen',p.n,'#818cf8'],['Siap Panen',p.r,'#a855f7']].map(x=>`<div><div class="flex justify-between"><span class="text-slate-300">${x[0]}</span><span class="font-semibold text-white">${x[1].toFixed(1)}%</span></div><div class="w-full bg-slate-800 h-1.5 rounded-full mt-1 overflow-hidden"><div class="h-full rounded-full" style="width:${x[1]}%;background:${x[2]}"></div></div></div>`).join('');
+  setBar([+p.g.toFixed(1),+p.n.toFixed(1),+p.r.toFixed(1)]);
+ 
+  // ---- hama & penyakit ----
+  const A=Gc+Yc+Bc+Dc+Hc||1;
+  const sh={g:Gc/A*100,y:Yc/A*100,b:Bc/A*100,d:Dc/A*100,h:Hc/A*100};
+  const items=diagnose(sh);
+  if(!items.length){
+    $('dzBadge').textContent='Sehat'; $('dzBadge').className=BADGE_BASE+'bg-green-500/15 text-green-300 border-green-400/30';
+    $('dzList').innerHTML=`<div class="bg-slate-900 p-3 rounded-lg border border-slate-800"><p class="text-green-300 font-semibold">Tidak ditemukan gejala hama/penyakit berarti</p><p class="text-slate-400 mt-1">Area daun sehat ${sh.g.toFixed(1)}%. Lanjutkan perawatan dan pemantauan rutin.</p></div>`;
+  }else{
+    const worst=items.slice().sort((a,b)=>b.v-a.v)[0];
+    $('dzBadge').textContent=`${worst.name.split(' (')[0]} (${worst.lvl})`;
+    $('dzBadge').className=BADGE_BASE+(worst.lvl==='Berat'?'bg-red-500/15 text-red-300 border-red-400/40':worst.lvl==='Sedang'?'bg-yellow-500/15 text-yellow-300 border-yellow-400/40':'bg-indigo-500/15 text-indigo-200 border-indigo-400/30');
+    $('dzList').innerHTML=items.map(o=>`<div class="bg-slate-900 p-3 rounded-lg border border-slate-800"><div class="flex justify-between gap-2"><span class="text-white font-semibold">${o.name}</span><span class="text-slate-300">${o.v.toFixed(1)}% &bull; ${o.lvl}</span></div><p class="text-slate-400 mt-1">${o.desc}</p><p class="text-purple-300 mt-1"><i class="fa-solid fa-lightbulb mr-1"></i>${o.act}</p></div>`).join('');
+  }
+  if(saveIt===true) saveCNNHistory({t:nowStr(),file:cnnName,width:+wcm.toFixed(2),phase,conf:+top.toFixed(1),diag:items.length?items.map(o=>o.name.split(' (')[0]+' ('+o.lvl+')').join('; '):'Tidak ada gejala'});
+}
+ 
+/* ============ HISTORY ============ */
+let curHist='sensor';
+function histTab(t){
+  curHist=t;
+  $('hb-sensor').className='px-4 py-2 rounded-lg font-semibold cursor-pointer '+(t==='sensor'?'bg-purple-600 text-white':'text-slate-400 hover:text-white');
+  $('hb-cnn').className='px-4 py-2 rounded-lg font-semibold cursor-pointer '+(t==='cnn'?'bg-purple-600 text-white':'text-slate-400 hover:text-white');
+  renderHistory();
+}
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function renderHistory(){
+  const q=($('histSearch').value||'').toLowerCase();
+  if(curHist==='sensor'){
+    $('histHead').innerHTML='<tr><th class="p-3">Waktu</th><th class="p-3">Soil (%)</th><th class="p-3">Suhu (°C)</th><th class="p-3">Kelembapan (%)</th><th class="p-3">Pompa</th><th class="p-3">Mode</th></tr>';
+    const rows=load('hist_sensor',[]).slice().reverse().filter(r=>JSON.stringify(r).toLowerCase().includes(q));
+    $('histBody').innerHTML=rows.map(r=>`<tr class="hover:bg-slate-800/50"><td class="p-3 text-white">${esc(r.t)}</td><td class="p-3">${r.soil}</td><td class="p-3">${r.temp}</td><td class="p-3">${r.hum}</td><td class="p-3">${r.pump}</td><td class="p-3">${r.mode}</td></tr>`).join('')||'<tr><td colspan="6" class="p-3 text-slate-500">Belum ada data.</td></tr>';
+  }else{
+    $('histHead').innerHTML='<tr><th class="p-3">Waktu</th><th class="p-3">File</th><th class="p-3">Lebar Daun (cm)</th><th class="p-3">Fase</th><th class="p-3">Keyakinan</th><th class="p-3">Diagnosa Hama/Penyakit</th></tr>';
+    const rows=load('hist_cnn',[]).slice().reverse().filter(r=>JSON.stringify(r).toLowerCase().includes(q));
+    $('histBody').innerHTML=rows.map(r=>`<tr class="hover:bg-slate-800/50"><td class="p-3 text-white">${esc(r.t)}</td><td class="p-3">${esc(r.file)}</td><td class="p-3">${r.width}</td><td class="p-3">${esc(r.phase)}</td><td class="p-3">${r.conf}${r.conf==="-"?"":"%"}</td><td class="p-3">${esc(r.diag||"-")}</td></tr>`).join('')||'<tr><td colspan="6" class="p-3 text-slate-500">Belum ada hasil analisis CNN.</td></tr>';
+  }
+}
+function exportCSV(){
+  let csv='';
+  if(curHist==='sensor'){csv='Waktu,Soil,Suhu,Kelembapan,Pompa,Mode\n'+load('hist_sensor',[]).map(r=>[r.t,r.soil,r.temp,r.hum,r.pump,r.mode].join(',')).join('\n')}
+  else{csv='Waktu,File,Lebar_cm,Fase,Keyakinan,Diagnosa\n'+load('hist_cnn',[]).map(r=>[r.t,r.file,r.width,r.phase,r.conf,r.diag||'-'].map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n')}
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download=`selada_history_${curHist}.csv`; a.click();
+}
+function clearHistory(){
+  if(!confirm('Hapus riwayat '+(curHist==='sensor'?'data sensor':'hasil CNN')+'?')) return;
+  save(curHist==='sensor'?'hist_sensor':'hist_cnn',[]); renderHistory();
+}
+ 
+/* ============ INIT ============ */
+window.onload=()=>{
+  initLiveCharts(); initGrowChart();
+  let pd=load('plant_date',null);
+  if(!pd){const d=new Date(Date.now()-38*86400000); pd=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+  $('plantDate').value=pd; $('hstNow').value=clamp(Math.floor(getHST()),1,41); updateGrowth();
+  renderPump(); setBar([0,0,0]); histTab('sensor');
+  const cc=load('cam_cfg',null); if(cc){$('camIp').value=cc.ip;$('camPort').value=cc.port;$('camPath').value=cc.path}
+  loop();
+};
+</script>
+</body>
+</html>
