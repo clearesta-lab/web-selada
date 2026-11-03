@@ -289,10 +289,6 @@ body{font-family:'Inter',sans-serif}
       <button onclick="clearHistory()" class="bg-slate-700 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg font-medium cursor-pointer"><i class="fa-solid fa-trash mr-1"></i> Hapus</button>
     </div>
   </div>
-  <div class="flex gap-2 text-xs">
-    <button id="hb-sensor" onclick="histTab('sensor')" class="px-4 py-2 rounded-lg bg-purple-600 text-white font-semibold cursor-pointer">Data Sensor</button>
-    <button id="hb-cnn" onclick="histTab('cnn')" class="px-4 py-2 rounded-lg text-slate-400 hover:text-white font-semibold cursor-pointer">Hasil CNN</button>
-  </div>
   <div class="glass-panel p-5 rounded-xl">
     <div class="overflow-x-auto custom-scrollbar max-h-[65vh]">
       <table class="w-full text-left text-xs text-slate-300">
@@ -680,6 +676,14 @@ function lstmEmpty(msg,sub){
   renderLSTMDays(0,null,null);   // kartu Hari ke-1..4 + kolom upload foto tetap tampil
   $('lstmDays').innerHTML='<div class="col-span-full text-xs text-slate-500">'+msg+'</div>'+$('lstmDays').innerHTML;
 }
+function saveLSTMHistory(hst0,days){
+  const h=load('hist_lstm',[]), last=h[h.length-1];
+  if(last && Date.now()-last.ms<300000) return;   // maksimal 1 catatan per 5 menit
+  let eff=hst0; const pcts=days.map(d=>{eff+=d.gf;return lstmPct(eff)});
+  const p4=pcts[3];
+  h.push({ms:Date.now(),txt:`HST ${hst0} → H+4: ${p4.toFixed(1)}% (${lstmPhase(p4)})`});
+  while(h.length>200) h.shift(); save('hist_lstm',h);
+}
 function runLSTM(){
   lstmSig=lstmMakeSig();
   let hIn=parseInt($('hstNow').value);
@@ -690,6 +694,7 @@ function runLSTM(){
   if(!res) return lstmEmpty('Belum cukup data sensor dari Firebase (minimal 3 pembacaan di /history). Tidak ada prediksi simulasi yang ditampilkan.','Menunggu data sensor dari Firebase.');
   const days=res.days.map(d=>({...d,gf:growthFactor(d.soil,d.temp,d.hum)}));
   lastForecast={hst0,days,res};
+  saveLSTMHistory(hst0,days);
   $('lstmCards').innerHTML=lstmTop(days,hst0);
   renderLSTMDays(hst0,days,res);
 }
@@ -818,6 +823,7 @@ function diagnose(sh){
   return out;
 }
 function saveCNNHistory(rec){
+  rec.ms=Date.now();
   const h=load('hist_cnn',[]); h.push(rec); while(h.length>200) h.shift(); save('hist_cnn',h);
 }
 function analyzeCurrent(saveIt){
@@ -910,38 +916,39 @@ function analyzeCurrent(saveIt){
 }
  
 /* ============ HISTORY ============ */
-let curHist='sensor';
-function histTab(t){
-  curHist=t;
-  $('hb-sensor').className='px-4 py-2 rounded-lg font-semibold cursor-pointer '+(t==='sensor'?'bg-purple-600 text-white':'text-slate-400 hover:text-white');
-  $('hb-cnn').className='px-4 py-2 rounded-lg font-semibold cursor-pointer '+(t==='cnn'?'bg-purple-600 text-white':'text-slate-400 hover:text-white');
-  renderHistory();
-}
+function histTab(){ renderHistory(); }
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function pickAt(arr,ms){   // ambil catatan terakhir yang waktunya <= waktu baris sensor
+  if(!arr.length) return null;
+  if(!Number.isFinite(ms)) return arr[arr.length-1];
+  let best=null; for(const a of arr){ if(a.ms<=ms) best=a; else break; } return best;
+}
+const cnnText=r=>!r?'-':(r.conf==='-'?r.phase:`${r.phase} (${r.conf}%, ${r.width} cm)`);
+const lstmText=r=>r?r.txt:'-';
+function histRows(){
+  const cnn=load('hist_cnn',[]).filter(r=>r.ms), lstm=load('hist_lstm',[]);
+  return firebaseHistory.slice().reverse().map(r=>{
+    const ms=lstmT(r.t);
+    return {t:r.t,soil:r.soil,temp:r.temp,hum:r.hum,pump:r.pump?'ON':'OFF',mode:'Firebase',
+            cnn:cnnText(pickAt(cnn,ms)),lstm:lstmText(pickAt(lstm,ms))};
+  });
+}
 function renderHistory(){
   const q=($('histSearch').value||'').toLowerCase();
-  if(curHist==='sensor'){
-    $('histHead').innerHTML='<tr><th class="p-3">Waktu</th><th class="p-3">Soil (%)</th><th class="p-3">Suhu (°C)</th><th class="p-3">Kelembapan (%)</th><th class="p-3">Pompa</th><th class="p-3">Mode</th></tr>';
-    const rows=firebaseHistory.slice().reverse().filter(r=>JSON.stringify(r).toLowerCase().includes(q));
-    $('histBody').innerHTML=rows.map(r=>`<tr class="hover:bg-slate-800/50"><td class="p-3 text-white">${esc(r.t)}</td><td class="p-3">${r.soil}</td><td class="p-3">${r.temp}</td><td class="p-3">${r.hum}</td><td class="p-3">${r.pump?'ON':'OFF'}</td><td class="p-3">Firebase</td></tr>`).join('')||'<tr><td colspan="6" class="p-3 text-slate-500">Belum ada data Firebase.</td></tr>';
-  }else{
-    $('histHead').innerHTML='<tr><th class="p-3">Waktu</th><th class="p-3">File</th><th class="p-3">Lebar Daun (cm)</th><th class="p-3">Fase</th><th class="p-3">Keyakinan</th><th class="p-3">Diagnosa Hama/Penyakit</th></tr>';
-    const rows=load('hist_cnn',[]).slice().reverse().filter(r=>JSON.stringify(r).toLowerCase().includes(q));
-    $('histBody').innerHTML=rows.map(r=>`<tr class="hover:bg-slate-800/50"><td class="p-3 text-white">${esc(r.t)}</td><td class="p-3">${esc(r.file)}</td><td class="p-3">${r.width}</td><td class="p-3">${esc(r.phase)}</td><td class="p-3">${r.conf}${r.conf==="-"?"":"%"}</td><td class="p-3">${esc(r.diag||"-")}</td></tr>`).join('')||'<tr><td colspan="6" class="p-3 text-slate-500">Belum ada hasil analisis CNN.</td></tr>';
-  }
+  $('histHead').innerHTML='<tr><th class="p-3">Waktu</th><th class="p-3">Soil (%)</th><th class="p-3">Suhu (°C)</th><th class="p-3">Kelembapan (%)</th><th class="p-3">Pompa</th><th class="p-3">Mode</th><th class="p-3">Hasil CNN</th><th class="p-3">Hasil LSTM</th></tr>';
+  const rows=histRows().filter(r=>JSON.stringify(r).toLowerCase().includes(q));
+  $('histBody').innerHTML=rows.map(r=>`<tr class="hover:bg-slate-800/50"><td class="p-3 text-white">${esc(r.t)}</td><td class="p-3">${r.soil}</td><td class="p-3">${r.temp}</td><td class="p-3">${r.hum}</td><td class="p-3">${r.pump}</td><td class="p-3">${r.mode}</td><td class="p-3">${esc(r.cnn)}</td><td class="p-3">${esc(r.lstm)}</td></tr>`).join('')||'<tr><td colspan="8" class="p-3 text-slate-500">Belum ada data Firebase.</td></tr>';
 }
 
 function exportCSV(){
-  let csv='';
-  if(curHist==='sensor'){csv='Waktu,Soil,Suhu,Kelembapan,Pompa,Mode\n'+firebaseHistory.map(r=>[r.t,r.soil,r.temp,r.hum,r.pump?'ON':'OFF','Firebase'].join(',')).join('\n')}
-  else{csv='Waktu,File,Lebar_cm,Fase,Keyakinan,Diagnosa\n'+load('hist_cnn',[]).map(r=>[r.t,r.file,r.width,r.phase,r.conf,r.diag||'-'].map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n')}
+  const csv='Waktu,Soil,Suhu,Kelembapan,Pompa,Mode,Hasil_CNN,Hasil_LSTM\n'+histRows().map(r=>[r.t,r.soil,r.temp,r.hum,r.pump,r.mode,r.cnn,r.lstm].map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
   const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
-  a.download=`selada_history_${curHist}.csv`; a.click();
+  a.download='selada_history.csv'; a.click();
 }
 function clearHistory(){
-  if(curHist==='sensor'){ alert('Riwayat sensor berasal dari Firebase bersama dan tidak dihapus dari halaman ini.'); return; }
-  if(!confirm('Hapus riwayat hasil CNN di browser?')) return;
-  save('hist_cnn',[]); renderHistory();
+  if(!confirm('Hapus riwayat hasil CNN & LSTM di browser? (Data sensor dari Firebase tidak dihapus)')) return;
+  save('hist_cnn',[]); save('hist_lstm',[]); renderHistory();
 }
  
 /* ============ INIT ============ */
