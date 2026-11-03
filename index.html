@@ -142,18 +142,6 @@ body{font-family:'Inter',sans-serif}
       <div class="glass-panel p-5 rounded-xl"><h4 class="text-xs font-semibold text-white mb-3"><i class="fa-solid fa-droplet text-purple-400 mr-1"></i> Soil Moisture (%)</h4><div class="relative h-56"><canvas id="cSoil"></canvas></div></div>
       <div class="glass-panel p-5 rounded-xl"><h4 class="text-xs font-semibold text-white mb-3"><i class="fa-solid fa-temperature-half text-slate-300 mr-1"></i> Suhu Sekitar (°C)</h4><div class="relative h-56"><canvas id="cTemp"></canvas></div></div>
       <div class="glass-panel p-5 rounded-xl"><h4 class="text-xs font-semibold text-white mb-3"><i class="fa-solid fa-wind text-indigo-300 mr-1"></i> Kelembapan Udara (%)</h4><div class="relative h-56"><canvas id="cHum"></canvas></div></div>
-      <div class="glass-panel p-5 rounded-xl">
-        <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <h4 class="text-xs font-semibold text-white"><i class="fa-solid fa-seedling text-purple-300 mr-1"></i> Perkembangan Tingkat Kematangan sejak Awal Tanam</h4>
-          <div class="flex flex-wrap items-center gap-2 text-xs">
-            <label class="text-slate-400">Tanggal tanam:</label>
-            <input id="plantDate" type="date" class="inp" onchange="onPlantDate()">
-            <span id="growBadge" class="px-2.5 py-1 rounded-full border border-purple-500/30 bg-purple-500/10 text-purple-300 font-semibold">-</span>
-          </div>
-        </div>
-        <div class="relative h-64"><canvas id="cGrow"></canvas></div>
-        <p class="text-[11px] text-slate-500 mt-2">Data kematangan aktual dan proyeksi akan ditampilkan setelah data/model tersedia.</p>
-      </div>
     </div>
   </div>
 </section>
@@ -217,6 +205,18 @@ body{font-family:'Inter',sans-serif}
     </div>
     <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" id="lstmDays"></div>
     <p class="text-[11px] text-slate-500 mt-4">Persentase = umur tanaman (HST) dibagi 42, dipercepat/diperlambat oleh faktor kondisi sensor hasil proyeksi data Firebase. Ini proyeksi statistik dari data nyata (bukan model LSTM terlatih).</p>
+  </div>
+  <div class="glass-panel p-5 rounded-xl">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+      <h4 class="text-xs font-semibold text-white"><i class="fa-solid fa-seedling text-purple-300 mr-1"></i> Perkembangan Tingkat Kematangan sejak Awal Tanam</h4>
+      <div class="flex flex-wrap items-center gap-2 text-xs">
+        <label class="text-slate-400">Tanggal tanam:</label>
+        <input id="plantDate" type="date" class="inp" onchange="onPlantDate()">
+        <span id="growBadge" class="px-2.5 py-1 rounded-full border border-purple-500/30 bg-purple-500/10 text-purple-300 font-semibold">-</span>
+      </div>
+    </div>
+    <div class="relative h-64"><canvas id="cGrow"></canvas></div>
+    <p class="text-[11px] text-slate-500 mt-2">Data kematangan aktual dan proyeksi akan ditampilkan setelah data/model tersedia.</p>
   </div>
 </section>
  
@@ -640,43 +640,75 @@ function growthFactor(soil,temp,hum){
   const f=(v,lo,hi,w)=>v<lo?clamp(1-(lo-v)/w,.2,1):v>hi?clamp(1-(v-hi)/w,.2,1):1;
   return +(f(soil,TH_ON,TH_OFF,25)*f(temp,18,26,10)*f(hum,55,75,25)).toFixed(2);
 }
+function lstmCardHtml(c){return `<div class="bg-slate-900 p-3.5 rounded-lg border border-slate-800 text-xs"><span class="text-slate-400 block">${c[0]}</span><span class="text-purple-300 font-semibold text-lg mt-1 block">${c[1]}</span><p class="text-slate-500 text-[11px] mt-1">${c[2]}</p></div>`}
+/* kartu ringkasan di atas 4 hari prediksi: selalu tampil.
+   Ada prediksi -> ringkasan 4 hari. Belum ada prediksi tapi sensor Firebase terbaca -> nilai saat ini. Keduanya kosong -> '--'. */
+function lstmTop(days,hst0){
+  let cards, tip;
+  if(days){
+    const n=days.length, avg=k=>days.reduce((a,b)=>a+b[k],0)/n;
+    const avgSoil=avg('soil'), maxT=Math.max(...days.map(d=>d.tmax));
+    cards=[
+      ['Kelembapan Tanah (rata-rata 4 hari)',avgSoil.toFixed(1)+' %',avgSoil<TH_ON?'Berpotensi kering':avgSoil>TH_OFF?'Cenderung basah':'Stabil'],
+      ['Suhu (puncak 4 hari)',maxT.toFixed(1)+' °C',maxT>26?'Aktifkan shading/misting':'Aman'],
+      ['Rata-rata Faktor Tumbuh',avg('gf').toFixed(2),'1.00 = kondisi ideal'],
+      ['Target Panen','HST '+HARVEST,`${HARVEST-hst0} hari lagi dari HST ${hst0}`]];
+    tip=lstmAdvice({soil:avgSoil,temp:avg('temp'),tmax:maxT,hum:avg('hum')});
+  }else if([S.soil,S.temp,S.hum].every(Number.isFinite)){
+    cards=[
+      ['Kelembapan Tanah',S.soil.toFixed(1)+' %','Saat ini (Firebase)'],
+      ['Suhu',S.temp.toFixed(1)+' °C','Saat ini (Firebase)'],
+      ['Kelembapan Udara',S.hum.toFixed(1)+' %','Saat ini (Firebase)'],
+      ['Target Panen','HST '+HARVEST,'Isi HST untuk melihat prediksi']];
+    tip=lstmAdvice({soil:S.soil,temp:S.temp,tmax:S.temp,hum:S.hum});
+  }else{
+    cards=[
+      ['Kelembapan Tanah','--','Menunggu data Firebase'],
+      ['Suhu','--','Menunggu data Firebase'],
+      ['Kelembapan Udara','--','Menunggu data Firebase'],
+      ['Target Panen','HST '+HARVEST,'Isi HST untuk melihat prediksi']];
+    tip='Menunggu data sensor dari Firebase.';
+  }
+  return cards.map(lstmCardHtml).join('')+`<div class="col-span-full bg-slate-900 p-3.5 rounded-lg border border-purple-500/20 text-xs"><span class="text-slate-400 block"><i class="fa-solid fa-lightbulb text-purple-300 mr-1"></i>Saran</span><p class="text-slate-200 text-[12px] mt-1 leading-relaxed">${tip}</p></div>`;
+}
+const lstmMakeSig=()=>{const l=firebaseHistory.length?firebaseHistory[firebaseHistory.length-1].t:'';return firebaseHistory.length+'|'+l+'|'+S.soil+'|'+S.temp+'|'+S.hum+'|'+$('hstNow').value+'|'+$('plantDate').value};
 let lstmMsg='', lstmSubMsg='';
 function lstmEmpty(msg,sub){
   lastForecast=null; lstmMsg=msg; lstmSubMsg=sub;
-  $('lstmCards').innerHTML='';
+  $('lstmCards').innerHTML=lstmTop(null,0);
   $('lstmSub').textContent=sub;
   renderLSTMDays(0,null,null);   // kartu Hari ke-1..4 + kolom upload foto tetap tampil
   $('lstmDays').innerHTML='<div class="col-span-full text-xs text-slate-500">'+msg+'</div>'+$('lstmDays').innerHTML;
 }
 function runLSTM(){
-  const lastT=firebaseHistory.length?firebaseHistory[firebaseHistory.length-1].t:'';
-  lstmSig=firebaseHistory.length+'|'+lastT+'|'+$('hstNow').value+'|'+$('plantDate').value;
+  lstmSig=lstmMakeSig();
   let hIn=parseInt($('hstNow').value);
   if(!hIn){ const g=Math.floor(getHST()); if(g>0) hIn=g; }   // kalau kolom HST kosong, pakai tanggal tanam
-  if(!hIn) return lstmEmpty('Isi umur tanaman (HST) di kolom atas, atau isi tanggal tanam di tab Monitoring.','Menunggu umur tanaman.');
+  if(!hIn) return lstmEmpty('Isi umur tanaman (HST) di kolom atas, atau isi tanggal tanam di grafik kematangan di bawah.','Menunggu umur tanaman.');
   const hst0=clamp(hIn,1,41);
   const res=lstmPredict(hst0);
   if(!res) return lstmEmpty('Belum cukup data sensor dari Firebase (minimal 3 pembacaan di /history). Tidak ada prediksi simulasi yang ditampilkan.','Menunggu data sensor dari Firebase.');
   const days=res.days.map(d=>({...d,gf:growthFactor(d.soil,d.temp,d.hum)}));
   lastForecast={hst0,days,res};
-  const avgSoil=days.reduce((a,b)=>a+b.soil,0)/4, maxT=Math.max(...days.map(d=>d.tmax));
-  const avgGf=days.reduce((a,b)=>a+b.gf,0)/4;
-  const cards=[
-    ['Tren Soil Moisture',avgSoil.toFixed(1)+' %',avgSoil<TH_ON?'Berpotensi kering':avgSoil>TH_OFF?'Cenderung basah':'Stabil'],
-    ['Puncak Suhu',maxT.toFixed(1)+' °C',maxT>26?'Aktifkan shading/misting':'Aman'],
-    ['Rata-rata Faktor Tumbuh',avgGf.toFixed(2),'1.00 = kondisi ideal'],
-    ['Target Panen','HST '+HARVEST,`${HARVEST-hst0} hari lagi dari HST ${hst0}`]];
-  $('lstmCards').innerHTML=cards.map(c=>`<div class="bg-slate-900 p-3.5 rounded-lg border border-slate-800 text-xs"><span class="text-slate-400 block">${c[0]}</span><span class="text-purple-300 font-semibold text-lg mt-1 block">${c[1]}</span><p class="text-slate-500 text-[11px] mt-1">${c[2]}</p></div>`).join('');
+  $('lstmCards').innerHTML=lstmTop(days,hst0);
   renderLSTMDays(hst0,days,res);
 }
 /* ikuti data Firebase: hitung ulang otomatis kalau ada data baru, selama tab LSTM terbuka */
 setInterval(()=>{
   const tab=$('tab-lstm'); if(!tab||tab.classList.contains('hidden')) return;
-  const lastT=firebaseHistory.length?firebaseHistory[firebaseHistory.length-1].t:'';
-  const sig=firebaseHistory.length+'|'+lastT+'|'+$('hstNow').value+'|'+$('plantDate').value;
-  if(sig!==lstmSig) runLSTM();
+  if(lstmMakeSig()!==lstmSig) runLSTM();
 },3000);
 
+function lstmAdvice(d){
+  const a=[];
+  if(d.soil<TH_ON) a.push('Tanah cenderung kering, siapkan penyiraman / pastikan pompa aktif.');
+  else if(d.soil>TH_OFF) a.push('Tanah cenderung terlalu basah, kurangi penyiraman dan pastikan drainase baik.');
+  if(d.tmax>26) a.push(`Suhu puncak ±${d.tmax.toFixed(1)}°C, beri shading/misting dan perbaiki sirkulasi udara.`);
+  else if(d.temp<18) a.push('Suhu cenderung rendah, lindungi tanaman dari dingin.');
+  if(d.hum>75) a.push('Udara lembap, tingkatkan sirkulasi udara agar jamur tidak tumbuh.');
+  else if(d.hum<55) a.push('Udara kering, pertimbangkan misting.');
+  return a.length?a.join(' '):'Kondisi ideal, lanjutkan perawatan rutin.';
+}
 function lstmPhase(p){return p>=90?'Siap Panen':p>=70?'Mendekati Panen':'Masa Pertumbuhan'}
 const getLstmImgs=()=>{const a=load('lstm_imgs',[]);return [0,1,2,3].map(i=>a[i]||null)};
 function rerenderLSTM(){if(lastForecast) renderLSTMDays(lastForecast.hst0,lastForecast.days,lastForecast.res); else lstmEmpty(lstmMsg,lstmSubMsg)}
@@ -700,8 +732,8 @@ function renderLSTMDays(hst0,days,res){
   if(res) $('lstmSub').textContent=`Proyeksi dari ${res.n} data sensor Firebase${res.trend?' (rata-rata 24 jam terakhir + tren harian)':res.timed?' (rata-rata 24 jam terakhir)':' (rata-rata data terbaru)'}.`;
   let eff=hst0; const imgs=getLstmImgs();
   $('lstmDays').innerHTML=[0,1,2,3].map(i=>{
-    let pct=null, ph='Menunggu data';
-    if(days){ eff+=days[i].gf; pct=lstmPct(eff); ph=lstmPhase(pct); }
+    let pct=null, ph='Menunggu data', soilTxt='--', tempTxt='--', tip='Menunggu data sensor dari Firebase.';
+    if(days){ const d=days[i]; eff+=d.gf; pct=lstmPct(eff); ph=lstmPhase(pct); soilTxt=d.soil.toFixed(1)+' %'; tempTxt=d.temp.toFixed(1)+' °C'; tip=lstmAdvice(d); }
     const badge=ph==='Siap Panen'?'bg-purple-500/20 text-purple-200 border-purple-400/40':ph==='Mendekati Panen'?'bg-indigo-500/15 text-indigo-200 border-indigo-400/30':ph==='Masa Pertumbuhan'?'bg-slate-700/40 text-slate-200 border-slate-500/40':'bg-slate-800/60 text-slate-400 border-slate-600/40';
     return `<div class="bg-slate-900/70 border border-purple-500/20 rounded-xl p-3.5 space-y-2.5">
       <div class="flex justify-between items-start">
@@ -709,6 +741,11 @@ function renderLSTMDays(hst0,days,res){
         <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full border ${badge}">${ph}</span>
       </div>
       <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden"><div class="bg-purple-400 h-full rounded-full" style="width:${pct===null?0:pct}%"></div></div>
+      <div class="grid grid-cols-2 gap-2 text-[11px]">
+        <div class="bg-slate-800/60 rounded-lg p-2"><span class="text-slate-400 block">Kelembapan Tanah</span><span class="text-white font-semibold">${soilTxt}</span></div>
+        <div class="bg-slate-800/60 rounded-lg p-2"><span class="text-slate-400 block">Suhu</span><span class="text-white font-semibold">${tempTxt}</span></div>
+      </div>
+      <p class="text-[11px] text-slate-300 leading-relaxed"><i class="fa-solid fa-lightbulb text-purple-300 mr-1"></i><span class="text-slate-400">Saran:</span> ${tip}</p>
       <p class="text-[11px] text-slate-400">Visualisasi Kondisi:</p>
       <label class="relative block h-32 rounded-lg overflow-hidden border ${imgs[i]?'border-slate-800':'border-dashed border-slate-700 hover:border-purple-500'} bg-slate-900 cursor-pointer">
         ${imgs[i]?`<img src="${imgs[i]}" alt="Hari ke-${i+1}" class="w-full h-full object-cover"><button type="button" onclick="delLstmImg(${i},event)" title="Hapus gambar" class="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-slate-900/80 hover:bg-red-700 text-white text-xs flex items-center justify-center"><i class="fa-solid fa-xmark"></i></button>`:`<div class="h-full flex flex-col items-center justify-center text-slate-500"><i class="fa-solid fa-image text-2xl text-purple-300/70"></i><span class="text-[11px] mt-1">Klik untuk upload gambar</span></div>`}
