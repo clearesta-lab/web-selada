@@ -65,11 +65,10 @@ body{font-family:'Inter',sans-serif}
     </div>
     <div class="flex flex-wrap items-center gap-2 text-xs">
       <select id="srcMode" class="inp" onchange="changeSource()">
-        <option value="sim">Mode Simulasi</option>
-        <option value="esp">ESP32 (HTTP)</option>
+        <option value="firebase">Firebase Realtime Database</option>
       </select>
-      <input id="espIp" class="inp w-40" placeholder="IP ESP32 sensor" value="192.168.1.101">
-      <span id="srcBadge" class="px-2 py-1 rounded-full border border-purple-500/30 bg-purple-500/10 text-purple-300 text-[11px]">Simulasi</span>
+      <input id="espIp" class="inp w-40" placeholder="IP ESP32 sensor" value="" disabled>
+      <span id="srcBadge" class="px-2 py-1 rounded-full border border-purple-500/30 bg-purple-500/10 text-purple-300 text-[11px]">Menunggu ESP32...</span>
     </div>
   </div>
  
@@ -80,7 +79,7 @@ body{font-family:'Inter',sans-serif}
         <div>
           <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Soil Moisture</p>
           <h3 class="text-2xl font-bold text-white mt-1" id="kSoil">-- %</h3>
-          <p class="text-xs mt-1 text-purple-300" id="kSoilS">Ideal (60 - 80%)</p>
+          <p class="text-xs mt-1 text-purple-300" id="kSoilS">Ideal (65 - 78%)</p>
         </div>
         <div class="p-3 bg-purple-500/10 text-purple-300 rounded-lg border border-purple-500/20"><i class="fa-solid fa-droplet text-xl"></i></div>
       </div>
@@ -153,7 +152,7 @@ body{font-family:'Inter',sans-serif}
           </div>
         </div>
         <div class="relative h-64"><canvas id="cGrow"></canvas></div>
-        <p class="text-[11px] text-slate-500 mt-2">Garis ungu = kematangan aktual sejak tanam (naik terus mengikuti umur tanaman), garis putus-putus = proyeksi sampai panen HST 42. Kurva berbentuk S (lambat &ndash; cepat &ndash; melandai) sebagai pendekatan pertumbuhan selada.</p>
+        <p class="text-[11px] text-slate-500 mt-2">Data kematangan aktual dan proyeksi akan ditampilkan setelah data/model tersedia.</p>
       </div>
     </div>
   </div>
@@ -200,7 +199,7 @@ body{font-family:'Inter',sans-serif}
     </div>
     <div class="flex flex-wrap items-center gap-2 text-xs">
       <label class="text-slate-400">Umur tanaman saat ini (HST):</label>
-      <input id="hstNow" type="number" min="1" max="41" value="38" class="inp w-16">
+      <input id="hstNow" type="number" min="1" max="41" value="" class="inp w-16">
       <button onclick="runLSTM()" class="bg-purple-600 hover:bg-purple-500 text-white px-3 py-1.5 rounded-lg font-medium cursor-pointer"><i class="fa-solid fa-wand-magic-sparkles mr-1"></i> Jalankan Prediksi</button>
     </div>
   </div>
@@ -217,7 +216,7 @@ body{font-family:'Inter',sans-serif}
       <button onclick="runLSTM()" class="text-xs text-purple-300 hover:text-white font-medium cursor-pointer"><i class="fa-solid fa-rotate mr-1"></i> Muat Ulang</button>
     </div>
     <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" id="lstmDays"></div>
-    <p class="text-[11px] text-slate-500 mt-4">Persentase = progres kematangan menuju panen (HST 42), dipercepat/diperlambat oleh faktor pertumbuhan hasil prediksi mikroklimat. Prediksi masih simulasi; ganti <span class="font-mono">lstmPredict()</span> dengan inferensi model LSTM terlatih Anda.</p>
+    <p class="text-[11px] text-slate-500 mt-4">Persentase = umur tanaman (HST) dibagi 42, dipercepat/diperlambat oleh faktor kondisi sensor hasil proyeksi data Firebase. Ini proyeksi statistik dari data nyata (bukan model LSTM terlatih).</p>
   </div>
 </section>
  
@@ -282,7 +281,7 @@ body{font-family:'Inter',sans-serif}
   <div class="flex flex-wrap items-center justify-between gap-3">
     <div>
       <h2 class="text-lg font-bold text-white">History</h2>
-      <p class="text-xs text-slate-400">Riwayat data sensor dan hasil analisis CNN (tersimpan di browser)</p>
+      <p class="text-xs text-slate-400">Riwayat data sensor dari Firebase dan hasil analisis CNN</p>
     </div>
     <div class="flex items-center gap-2 text-xs">
       <input id="histSearch" onkeyup="renderHistory()" class="inp w-48" placeholder="Cari...">
@@ -315,6 +314,15 @@ const nowStr=()=>new Date().toLocaleString('id-ID',{hour12:false});
 const load=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))||d}catch(e){return d}};
 const save=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
 const GRID='rgba(51,65,85,.3)', TICK='#94a3b8';
+// ================= FIREBASE =================
+// Menggunakan Firebase Realtime Database yang sama dengan project kelompok.
+// Kode ini memakai REST API, jadi tidak mengubah tampilan dan tidak membutuhkan backend.
+const FIREBASE_DB_URL='https://selada-a9428-default-rtdb.asia-southeast1.firebasedatabase.app';
+// Node lama dipakai sebagai kandidat pertama. Jika tidak ada, sistem mencari otomatis.
+const FIREBASE_NODE='-P56DmqHVTCP5FIhZ7R5';
+let FIREBASE_BASE=`${FIREBASE_DB_URL}/${FIREBASE_NODE}`;
+let FIREBASE_RESOLVED=false;
+let firebaseHistory=[]; let firebaseLastTimestamp='';
 function toggleSidebar(){$('sidebar').classList.toggle('-translate-x-full');$('overlay').classList.toggle('hidden')}
  
 /* ============ TABS ============ */
@@ -330,7 +338,7 @@ function switchTab(t){
 }
  
 /* ============ STATE ============ */
-const S={soil:68,temp:23,hum:65,pump:false,mode:'auto',source:'sim',tick:0};
+const S={soil:null,temp:null,hum:null,pump:false,mode:'auto',source:'esp',tick:0};
 const charts={};
 const MAXPTS=40;
  
@@ -357,31 +365,26 @@ function initGrowChart(){
 }
 const HARVEST=42;
 function maturityAt(h){
-  const L=x=>1/(1+Math.exp(-(x-21)/6.5)), a=L(0), b=L(HARVEST);
-  return clamp((L(clamp(h,0,HARVEST))-a)/(b-a)*100,0,100);
+  return null;
 }
+
 function getHST(){
   const v=$('plantDate').value; if(!v) return 0;
   const d=new Date(v+'T00:00:00'); return Math.max(0,(Date.now()-d.getTime())/86400000);
 }
 function updateGrowth(){
   if(!charts.grow) return;
-  const hst=getHST(), cur=Math.min(hst,HARVEST), day=Math.floor(cur);
-  const act=[],pro=[];
-  for(let i=0;i<=HARVEST;i++){
-    act.push(i<day?+maturityAt(i).toFixed(1):i===day?+maturityAt(cur).toFixed(2):null);
-    pro.push(i>=day?+(i===day?maturityAt(cur):maturityAt(i)).toFixed(1):null);
-  }
-  charts.grow.data.datasets[0].data=act; charts.grow.data.datasets[1].data=pro; charts.grow.update('none');
-  const m=maturityAt(cur), ph=m>=90?'Siap Panen':m>=70?'Mendekati Panen':'Masa Pertumbuhan';
-  $('growBadge').textContent=`HST ${Math.floor(hst)} \u2022 ${m.toFixed(1)}% \u2022 ${ph}`;
+  charts.grow.data.datasets[0].data=[];
+  charts.grow.data.datasets[1].data=[];
+  charts.grow.update('none');
+  $('growBadge').textContent='Menunggu data aktual';
 }
+
 function onPlantDate(){
   const v=$('plantDate').value; if(v) save('plant_date',v);
-  const h=clamp(Math.floor(getHST()),1,41); $('hstNow').value=h;
-  if(typeof lastForecast!=='undefined'&&lastForecast) runLSTM();
   updateGrowth();
 }
+
 function pushLive(){
   const lab=new Date().toLocaleTimeString('id-ID',{hour12:false});
   const add=(c,vals)=>{c.data.labels.push(lab);vals.forEach((v,i)=>c.data.datasets[i].data.push(v));
@@ -397,61 +400,158 @@ function pushRT(lab){
   $('rtBody').innerHTML=rtRows.map((r,i)=>`<tr class="${i===0?'bg-purple-500/5':''} hover:bg-slate-800/50"><td class="p-3 font-medium text-white">${r.t}</td><td class="p-3">${r.soil.toFixed(1)}</td><td class="p-3">${r.temp.toFixed(1)}</td><td class="p-3">${r.hum.toFixed(1)}</td><td class="p-3 ${r.pump?'text-purple-300 font-semibold':''}">${r.pump?'ON':'OFF'}</td><td class="p-3"><span class="px-2 py-0.5 rounded border text-[10px] ${r.bad===0?'bg-purple-500/10 text-purple-300 border-purple-500/20':r.bad===1?'bg-yellow-500/10 text-yellow-300 border-yellow-500/20':'bg-red-500/10 text-red-300 border-red-500/20'}">${r.bad===0?'Normal':r.bad===1?'Perhatian':'Peringatan'}</span></td></tr>`).join('');
 }
  
-/* ============ SENSOR SOURCE ============ */
+/* ============ FIREBASE SENSOR SOURCE ============ */
 function changeSource(){
-  S.source=$('srcMode').value;
-  $('srcBadge').textContent=S.source==='sim'?'Simulasi':'Menghubungkan ESP32...';
+  S.source='firebase';
+  $('srcBadge').textContent='Menghubungkan Firebase...';
 }
-function simStep(){
-  const t=Date.now()/1000;
-  S.temp=clamp(23+2.5*Math.sin(t/60)+(Math.random()-.5)*.4,15,35);
-  S.hum=clamp(65-6*Math.sin(t/60)+(Math.random()-.5)*1.2,30,95);
-  S.soil=clamp(S.soil+(S.pump?1.4:-0.35)+(Math.random()-.5)*.3,20,95);
+
+async function fetchFirebaseJson(path, base=FIREBASE_BASE){
+  const url=`${base}/${path}.json`;
+  const r=await fetch(url,{cache:'no-store'});
+  if(!r.ok){
+    let detail='';
+    try{ detail=await r.text(); }catch(_){}
+    throw new Error(`Firebase HTTP ${r.status} pada ${url}${detail?` | ${detail.slice(0,180)}`:''}`);
+  }
+  return await r.json();
 }
-async function pollESP(){
-  const ip=$('espIp').value.trim(); if(!ip) return false;
-  const url=ip.startsWith('http')?ip:`http://${ip}/data`;
-  const ctl=new AbortController(); const to=setTimeout(()=>ctl.abort(),1800);
+
+async function resolveFirebaseNode(){
+  // 1) Coba node yang sudah digunakan sebelumnya.
   try{
-    const r=await fetch(url,{signal:ctl.signal}); const j=await r.json(); clearTimeout(to);
-    if(typeof j.soil==='number') S.soil=j.soil;
-    if(typeof j.temp==='number') S.temp=j.temp;
-    if(typeof j.hum==='number') S.hum=j.hum;
-    $('srcBadge').textContent='ESP32 Online'; return true;
-  }catch(e){clearTimeout(to);$('srcBadge').textContent='ESP32 Offline';return false}
+    const cur=await fetchFirebaseJson('current');
+    if(cur && typeof cur==='object'){
+      FIREBASE_RESOLVED=true;
+      console.log('Firebase node aktif:',FIREBASE_BASE);
+      return FIREBASE_BASE;
+    }
+  }catch(e){ console.warn('Node Firebase lama tidak dapat dipakai:',e); }
+
+  // 2) Coba root langsung. Ini cocok jika struktur Firebase adalah:
+  //    current / history / settings
+  try{
+    const root=await fetchFirebaseJson('',FIREBASE_DB_URL);
+    if(root && typeof root==='object'){
+      if(root.current && typeof root.current==='object'){
+        FIREBASE_BASE=FIREBASE_DB_URL;
+        FIREBASE_RESOLVED=true;
+        console.log('Firebase menggunakan ROOT:',FIREBASE_BASE);
+        return FIREBASE_BASE;
+      }
+
+      // 3) Coba struktur bersarang, misalnya:
+      //    smart_farming / current / history
+      //    atau node ID lain / current / history
+      for(const [key,val] of Object.entries(root)){
+        if(val && typeof val==='object' && val.current && typeof val.current==='object'){
+          FIREBASE_BASE=`${FIREBASE_DB_URL}/${encodeURIComponent(key)}`;
+          FIREBASE_RESOLVED=true;
+          console.log('Firebase node ditemukan otomatis:',key);
+          return FIREBASE_BASE;
+        }
+      }
+    }
+  }catch(e){
+    console.error('Tidak dapat membaca root Firebase:',e);
+  }
+
+  throw new Error('Data /current tidak ditemukan pada Firebase. Periksa struktur database dan Rules.');
 }
- 
+function normalizeHistory(raw){
+  if(!raw) return [];
+  const entries=Array.isArray(raw) ? raw.map((v,i)=>[String(i),v]) : Object.entries(raw);
+  return entries.map(([id,v])=>({
+    id,
+    t:String(v?.timestamp ?? v?.time ?? v?.t ?? ''),
+    soil:Number(v?.soil ?? v?.soilMoisture ?? v?.kelembapanTanah),
+    temp:Number(v?.temperature ?? v?.temp ?? v?.suhu),
+    hum:Number(v?.humidity ?? v?.hum ?? v?.kelembapanUdara),
+    pump:(v?.pump===true || v?.pump===1 || String(v?.pump).toLowerCase()==='on' || String(v?.pump).toLowerCase()==='true')
+  })).filter(r=>r.t && Number.isFinite(r.soil) && Number.isFinite(r.temp) && Number.isFinite(r.hum));
+}
+function sortHistory(rows){
+  return rows.slice().sort((a,b)=>String(a.t).localeCompare(String(b.t)));
+}
+
+function applyFirebaseHistory(raw){
+  firebaseHistory=sortHistory(normalizeHistory(raw));
+  const latest=firebaseHistory.slice(-MAXPTS);
+  charts.soil.data.labels=latest.map(r=>r.t.slice(-8));
+  charts.soil.data.datasets[0].data=latest.map(r=>r.soil);
+  charts.temp.data.labels=latest.map(r=>r.t.slice(-8));
+  charts.temp.data.datasets[0].data=latest.map(r=>r.temp);
+  charts.hum.data.labels=latest.map(r=>r.t.slice(-8));
+  charts.hum.data.datasets[0].data=latest.map(r=>r.hum);
+  charts.soil.update('none'); charts.temp.update('none'); charts.hum.update('none');
+  renderRealtimeRows(latest.slice().reverse().slice(0,15));
+}
+
+function renderRealtimeRows(rows){
+  $('rtBody').innerHTML=rows.map((r,i)=>{
+    const bad=[stat(r.soil,65,78),stat(r.temp,18,26),stat(r.hum,55,75)].filter(x=>x!=='ok').length;
+    return `<tr class="${i===0?'bg-purple-500/5':''} hover:bg-slate-800/50"><td class="p-3 font-medium text-white">${esc(r.t)}</td><td class="p-3">${r.soil.toFixed(1)}</td><td class="p-3">${r.temp.toFixed(1)}</td><td class="p-3">${r.hum.toFixed(1)}</td><td class="p-3 ${r.pump?'text-purple-300 font-semibold':''}">${r.pump?'ON':'OFF'}</td><td class="p-3"><span class="px-2 py-0.5 rounded border text-[10px] ${bad===0?'bg-purple-500/10 text-purple-300 border-purple-500/20':bad===1?'bg-yellow-500/10 text-yellow-300 border-yellow-500/20':'bg-red-500/10 text-red-300 border-red-500/20'}">${bad===0?'Normal':bad===1?'Perhatian':'Peringatan'}</span></td></tr>`;
+  }).join('') || '<tr><td colspan="6" class="p-3 text-slate-500">Belum ada data Firebase.</td></tr>';
+}
+
+async function pollFirebase(){
+  try{
+    if(!FIREBASE_RESOLVED) await resolveFirebaseNode();
+
+    const cur=await fetchFirebaseJson('current');
+    if(!cur || typeof cur!=='object') throw new Error('Node /current kosong.');
+
+    const soil=Number(cur?.soil ?? cur?.soilMoisture ?? cur?.kelembapanTanah);
+    const temp=Number(cur?.temperature ?? cur?.temp ?? cur?.suhu);
+    const hum=Number(cur?.humidity ?? cur?.hum ?? cur?.kelembapanUdara);
+
+    if(!Number.isFinite(soil) || !Number.isFinite(temp) || !Number.isFinite(hum)){
+      throw new Error(`Field /current tidak lengkap: soil=${cur?.soil}, temperature=${cur?.temperature}, humidity=${cur?.humidity}`);
+    }
+
+    S.soil=soil;
+    S.temp=temp;
+    S.hum=hum;
+    S.pump=(cur?.pump===true || cur?.pump===1 || String(cur?.pump).toLowerCase()==='on' || String(cur?.pump).toLowerCase()==='true');
+    firebaseLastTimestamp=String(cur.timestamp ?? cur.time ?? cur.t ?? '');
+    $('srcBadge').textContent='Firebase Online';
+    $('kUpd').textContent='Update terakhir: '+(firebaseLastTimestamp || new Date().toLocaleTimeString('id-ID',{hour12:false}));
+
+    // History tetap dibaca dari Firebase agar tabel dan grafik mengikuti data nyata.
+    const hist=await fetchFirebaseJson('history');
+    applyFirebaseHistory(hist);
+    return true;
+  }catch(e){
+    $('srcBadge').textContent='Firebase Offline';
+    console.error('Firebase:',e);
+    return false;
+  }
+}
 /* ============ PUMP ============ */
-function sendPump(on){
-  if(S.source!=='esp') return;
-  const ip=$('espIp').value.trim(); if(!ip) return;
-  const base=ip.startsWith('http')?ip.replace(/\/data.*$/,''):`http://${ip}`;
-  fetch(`${base}/pump?state=${on?'on':'off'}`,{mode:'no-cors'}).catch(()=>{});
-}
-const TH_ON=60, TH_OFF=72; let pumpNote='';
+const TH_ON=65, TH_OFF=78;
 function setPump(on,reason){
-  if(S.pump===on) return;
-  S.pump=on; sendPump(on);
-  pumpNote=reason+' ('+new Date().toLocaleTimeString('id-ID',{hour12:false})+')';
+  S.pump=!!on;
+  pumpNote=reason || '';
   renderPump();
 }
 function autoPump(){
-  if(!S.pump && S.soil<TH_ON) setPump(true,`soil ${S.soil.toFixed(1)}% < ${TH_ON}%`);
-  else if(S.pump && S.soil>=TH_OFF) setPump(false,`soil ${S.soil.toFixed(1)}% ≥ ${TH_OFF}%`);
+  // Pump state is read from Firebase. Automatic control remains on ESP32.
 }
+let pumpNote='';
 function renderPump(){
   $('kSys').textContent=S.pump?'ON':'OFF';
   $('kSys').className='text-2xl font-bold mt-1 '+(S.pump?'text-purple-300 animate-pulse':'text-slate-300');
 }
- 
+
 /* ============ UI UPDATE ============ */
 function stat(v,lo,hi){return v<lo?'low':v>hi?'high':'ok'}
 function updateKPI(){
+  if(!Number.isFinite(S.soil)||!Number.isFinite(S.temp)||!Number.isFinite(S.hum)) return;
   $('kSoil').textContent=S.soil.toFixed(1)+' %'; $('bSoil').style.width=clamp(S.soil,0,100)+'%';
   $('kTemp').textContent=S.temp.toFixed(1)+' °C'; $('bTemp').style.width=clamp(S.temp/40*100,0,100)+'%';
   $('kHum').textContent=S.hum.toFixed(1)+' %'; $('bHum').style.width=clamp(S.hum,0,100)+'%';
-  const a=stat(S.soil,60,80), b=stat(S.temp,18,26), c=stat(S.hum,55,75);
-  $('kSoilS').textContent=a==='ok'?'Ideal (60 - 80%)':a==='low'?'Terlalu kering':'Terlalu basah';
+  const a=stat(S.soil,65,78), b=stat(S.temp,18,26), c=stat(S.hum,55,75);
+  $('kSoilS').textContent=a==='ok'?'Ideal (65 - 78%)':a==='low'?'Terlalu kering':'Terlalu basah';
   $('kTempS').textContent=b==='ok'?'Optimal (18 - 26°C)':b==='low'?'Terlalu dingin':'Terlalu panas';
   $('kHumS').textContent=c==='ok'?'Normal (55 - 75%)':c==='low'?'Terlalu kering':'Terlalu lembap';
   $('kUpd').textContent='Update terakhir: '+new Date().toLocaleTimeString('id-ID',{hour12:false});
@@ -460,16 +560,13 @@ function updateKPI(){
 /* ============ MAIN LOOP ============ */
 async function loop(){
   S.tick++;
-  if(S.source==='sim'){simStep();$('srcBadge').textContent='Simulasi'}
-  else await pollESP();
-  autoPump(); updateKPI(); pushLive();
-  if(S.tick%5===0){
-    const h=load('hist_sensor',[]); h.push({t:nowStr(),soil:+S.soil.toFixed(1),temp:+S.temp.toFixed(1),hum:+S.hum.toFixed(1),pump:S.pump?'ON':'OFF',mode:S.mode});
-    while(h.length>500) h.shift(); save('hist_sensor',h);
+  const ok=await pollFirebase();
+  if(ok && Number.isFinite(S.soil) && Number.isFinite(S.temp) && Number.isFinite(S.hum)){
+    updateKPI(); renderPump();
   }
-  setTimeout(loop,2000);
+  setTimeout(loop,5000);
 }
- 
+
 /* ============ CAMERA ============ */
 function camUrl(){
   const ip=$('camIp').value.trim();
@@ -499,59 +596,90 @@ function camFullscreen(){
   else if(el.requestFullscreen) el.requestFullscreen();
 }
  
-/* ============ LSTM (simulasi) ============ */
-let lastForecast=null;
-function recentAvg(){
-  const h=load('hist_sensor',[]).slice(-60);
-  if(h.length<3) return {soil:S.soil,temp:S.temp,hum:S.hum};
-  const m=k=>h.reduce((a,b)=>a+b[k],0)/h.length;
-  return {soil:m('soil'),temp:m('temp'),hum:m('hum')};
-}
-/* Ganti fungsi ini dengan inferensi model LSTM terlatih Anda.
-   Output: array 16 titik {day,hour,soil,temp,hum} (4 hari x 4 jam). */
+/* ============ LSTM (proyeksi dari data sensor Firebase) ============ */
+/* Semua angka di bawah dihitung dari firebaseHistory (data sensor nyata di Firebase).
+   Tidak ada data simulasi / angka karangan. Kalau data belum cukup, yang tampil hanya pesan menunggu. */
+let lastForecast=null; let lstmSig='';
+const lstmT=t=>{const ms=new Date(String(t).trim().replace(' ','T')).getTime();return Number.isFinite(ms)?ms:NaN};
+const lstmPct=h=>clamp(h/HARVEST*100,0,100);   // progres menuju panen = umur tanaman / 42 HST
 function lstmPredict(hst0){
-  const base=recentAvg(), out=[]; const hours=[6,12,18,24];
+  const all=firebaseHistory.filter(r=>Number.isFinite(r.soil)&&Number.isFinite(r.temp)&&Number.isFinite(r.hum));
+  if(all.length<3) return null;
+  const DAY=86400000;
+  let rows=all, ts=all.map(r=>lstmT(r.t));
+  const okT=ts.every(Number.isFinite);
+  if(okT){
+    const tEnd=Math.max(...ts), keep=ts.map(t=>t>=tEnd-7*DAY);   // pakai maksimal 7 hari terakhir
+    rows=all.filter((_,i)=>keep[i]); ts=ts.filter((_,i)=>keep[i]);
+  }else{ rows=all.slice(-200); }
+  const span=okT?(Math.max(...ts)-Math.min(...ts))/DAY:0;
+  const tEnd=okT?Math.max(...ts):0;
+  const recent=okT?rows.filter((_,i)=>ts[i]>=tEnd-DAY):rows.slice(-60);   // 24 jam terakhir
+  const avg=(a,k)=>a.reduce((s,r)=>s+r[k],0)/a.length;
+  const slope=k=>{   // perubahan per hari (regresi linear), hanya dipakai kalau data sudah >= 2 hari
+    if(!okT||span<2) return 0;
+    const xs=ts.map(t=>(t-ts[0])/DAY), ys=rows.map(r=>r[k]);
+    const mx=xs.reduce((a,b)=>a+b,0)/xs.length, my=ys.reduce((a,b)=>a+b,0)/ys.length;
+    let num=0,den=0; for(let i=0;i<xs.length;i++){num+=(xs[i]-mx)*(ys[i]-my);den+=(xs[i]-mx)**2}
+    return den>0?num/den:0;
+  };
+  const base={soil:avg(recent,'soil'),temp:avg(recent,'temp'),hum:avg(recent,'hum')};
+  const tmax=Math.max(...recent.map(r=>r.temp));
+  const sl={soil:slope('soil'),temp:slope('temp'),hum:slope('hum')};
+  const days=[];
   for(let d=1;d<=4;d++){
-    hours.forEach((hr,i)=>{
-      const phase=(hr-6)/24*2*Math.PI;
-      const temp=base.temp+2.8*Math.sin(phase)+0.15*d+0.25*Math.sin(d*3+i);
-      const hum=base.hum-6*Math.sin(phase)+0.3*Math.cos(d*2+i);
-      const soil=base.soil-1.2*Math.sin(phase)+0.4*Math.sin(d*2.3+i);
-      out.push({day:hst0+d,hour:hr,soil:clamp(soil,20,95),temp:clamp(temp,15,38),hum:clamp(hum,30,95)});
-    });
+    days.push({hst:hst0+d,
+      soil:clamp(base.soil+sl.soil*d,0,100),
+      temp:clamp(base.temp+sl.temp*d,-5,60),
+      tmax:clamp(tmax+sl.temp*d,-5,60),
+      hum:clamp(base.hum+sl.hum*d,0,100)});
   }
-  return out;
+  return {days,n:all.length,span,trend:span>=2,timed:okT};
 }
 function growthFactor(soil,temp,hum){
   const f=(v,lo,hi,w)=>v<lo?clamp(1-(lo-v)/w,.2,1):v>hi?clamp(1-(v-hi)/w,.2,1):1;
-  return +(f(soil,60,80,25)*f(temp,18,26,10)*f(hum,55,75,25)).toFixed(2);
+  return +(f(soil,TH_ON,TH_OFF,25)*f(temp,18,26,10)*f(hum,55,75,25)).toFixed(2);
+}
+let lstmMsg='', lstmSubMsg='';
+function lstmEmpty(msg,sub){
+  lastForecast=null; lstmMsg=msg; lstmSubMsg=sub;
+  $('lstmCards').innerHTML='';
+  $('lstmSub').textContent=sub;
+  renderLSTMDays(0,null,null);   // kartu Hari ke-1..4 + kolom upload foto tetap tampil
+  $('lstmDays').innerHTML='<div class="col-span-full text-xs text-slate-500">'+msg+'</div>'+$('lstmDays').innerHTML;
 }
 function runLSTM(){
-  const hst0=clamp(parseInt($('hstNow').value)||38,1,41);
-  const pts=lstmPredict(hst0); const days=[];
-  for(let d=1;d<=4;d++){
-    const p=pts.filter(x=>x.day===hst0+d);
-    const avg=k=>p.reduce((a,b)=>a+b[k],0)/p.length;
-    const soil=avg('soil'),hum=avg('hum'),tmax=Math.max(...p.map(x=>x.temp));
-    const gf=growthFactor(soil,tmax-1.5,hum);
-    const risk=gf>=.9?'Rendah':gf>=.7?'Sedang':'Tinggi';
-    days.push({hst:hst0+d,soil,temp:tmax,hum,gf,risk});
-  }
-  lastForecast={hst0,pts,days};
-  // cards
-  const avgSoil=days.reduce((a,b)=>a+b.soil,0)/4, maxT=Math.max(...days.map(d=>d.temp));
+  const lastT=firebaseHistory.length?firebaseHistory[firebaseHistory.length-1].t:'';
+  lstmSig=firebaseHistory.length+'|'+lastT+'|'+$('hstNow').value+'|'+$('plantDate').value;
+  let hIn=parseInt($('hstNow').value);
+  if(!hIn){ const g=Math.floor(getHST()); if(g>0) hIn=g; }   // kalau kolom HST kosong, pakai tanggal tanam
+  if(!hIn) return lstmEmpty('Isi umur tanaman (HST) di kolom atas, atau isi tanggal tanam di tab Monitoring.','Menunggu umur tanaman.');
+  const hst0=clamp(hIn,1,41);
+  const res=lstmPredict(hst0);
+  if(!res) return lstmEmpty('Belum cukup data sensor dari Firebase (minimal 3 pembacaan di /history). Tidak ada prediksi simulasi yang ditampilkan.','Menunggu data sensor dari Firebase.');
+  const days=res.days.map(d=>({...d,gf:growthFactor(d.soil,d.temp,d.hum)}));
+  lastForecast={hst0,days,res};
+  const avgSoil=days.reduce((a,b)=>a+b.soil,0)/4, maxT=Math.max(...days.map(d=>d.tmax));
+  const avgGf=days.reduce((a,b)=>a+b.gf,0)/4;
   const cards=[
-    ['Tren Soil Moisture',avgSoil.toFixed(1)+' %',avgSoil<60?'Berpotensi kering':'Stabil'],
+    ['Tren Soil Moisture',avgSoil.toFixed(1)+' %',avgSoil<TH_ON?'Berpotensi kering':avgSoil>TH_OFF?'Cenderung basah':'Stabil'],
     ['Puncak Suhu',maxT.toFixed(1)+' °C',maxT>26?'Aktifkan shading/misting':'Aman'],
-    ['Rata-rata Faktor Tumbuh',(days.reduce((a,b)=>a+b.gf,0)/4).toFixed(2),'1.00 = kondisi ideal'],
+    ['Rata-rata Faktor Tumbuh',avgGf.toFixed(2),'1.00 = kondisi ideal'],
     ['Target Panen','HST '+HARVEST,`${HARVEST-hst0} hari lagi dari HST ${hst0}`]];
   $('lstmCards').innerHTML=cards.map(c=>`<div class="bg-slate-900 p-3.5 rounded-lg border border-slate-800 text-xs"><span class="text-slate-400 block">${c[0]}</span><span class="text-purple-300 font-semibold text-lg mt-1 block">${c[1]}</span><p class="text-slate-500 text-[11px] mt-1">${c[2]}</p></div>`).join('');
-  renderLSTMDays(hst0,days);
+  renderLSTMDays(hst0,days,res);
 }
- 
+/* ikuti data Firebase: hitung ulang otomatis kalau ada data baru, selama tab LSTM terbuka */
+setInterval(()=>{
+  const tab=$('tab-lstm'); if(!tab||tab.classList.contains('hidden')) return;
+  const lastT=firebaseHistory.length?firebaseHistory[firebaseHistory.length-1].t:'';
+  const sig=firebaseHistory.length+'|'+lastT+'|'+$('hstNow').value+'|'+$('plantDate').value;
+  if(sig!==lstmSig) runLSTM();
+},3000);
+
 function lstmPhase(p){return p>=90?'Siap Panen':p>=70?'Mendekati Panen':'Masa Pertumbuhan'}
 const getLstmImgs=()=>{const a=load('lstm_imgs',[]);return [0,1,2,3].map(i=>a[i]||null)};
-function rerenderLSTM(){if(lastForecast) renderLSTMDays(lastForecast.hst0,lastForecast.days)}
+function rerenderLSTM(){if(lastForecast) renderLSTMDays(lastForecast.hst0,lastForecast.days,lastForecast.res); else lstmEmpty(lstmMsg,lstmSubMsg)}
 function setLstmImg(i,ev){
   const f=ev.target.files[0]; if(!f) return;
   const img=new Image(), url=URL.createObjectURL(f);
@@ -568,21 +696,22 @@ function delLstmImg(i,ev){
   ev.preventDefault(); ev.stopPropagation();
   const a=getLstmImgs(); a[i]=null; save('lstm_imgs',a); rerenderLSTM();
 }
-function renderLSTMDays(hst0,days){
-  const n=Math.min(300,load('hist_sensor',[]).length);
-  $('lstmSub').textContent=`Hasil analisis model LSTM berdasarkan ${n>0?n:'data'} data sensor terakhir.`;
+function renderLSTMDays(hst0,days,res){
+  if(res) $('lstmSub').textContent=`Proyeksi dari ${res.n} data sensor Firebase${res.trend?' (rata-rata 24 jam terakhir + tren harian)':res.timed?' (rata-rata 24 jam terakhir)':' (rata-rata data terbaru)'}.`;
   let eff=hst0; const imgs=getLstmImgs();
-  $('lstmDays').innerHTML=days.map((d,i)=>{
-    eff+=d.gf; const pct=maturityAt(eff), ph=lstmPhase(pct);
-    const badge=ph==='Siap Panen'?'bg-purple-500/20 text-purple-200 border-purple-400/40':ph==='Mendekati Panen'?'bg-indigo-500/15 text-indigo-200 border-indigo-400/30':'bg-slate-700/40 text-slate-200 border-slate-500/40';
+  $('lstmDays').innerHTML=[0,1,2,3].map(i=>{
+    let pct=null, ph='Menunggu data';
+    if(days){ eff+=days[i].gf; pct=lstmPct(eff); ph=lstmPhase(pct); }
+    const badge=ph==='Siap Panen'?'bg-purple-500/20 text-purple-200 border-purple-400/40':ph==='Mendekati Panen'?'bg-indigo-500/15 text-indigo-200 border-indigo-400/30':ph==='Masa Pertumbuhan'?'bg-slate-700/40 text-slate-200 border-slate-500/40':'bg-slate-800/60 text-slate-400 border-slate-600/40';
     return `<div class="bg-slate-900/70 border border-purple-500/20 rounded-xl p-3.5 space-y-2.5">
       <div class="flex justify-between items-start">
-        <div><p class="text-[10px] uppercase tracking-wider text-slate-400">Hari ke-${d.hst}${d.hst===HARVEST?' (Panen)':''}</p><p class="text-2xl font-bold text-purple-300 mt-0.5">${pct.toFixed(1)}%</p></div>
+        <div><p class="text-[10px] uppercase tracking-wider text-slate-400">Hari ke-${i+1}</p><p class="text-2xl font-bold text-purple-300 mt-0.5">${pct===null?'--':pct.toFixed(1)}%</p></div>
         <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full border ${badge}">${ph}</span>
       </div>
-      <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden"><div class="bg-purple-400 h-full rounded-full" style="width:${pct}%"></div></div>
+      <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden"><div class="bg-purple-400 h-full rounded-full" style="width:${pct===null?0:pct}%"></div></div>
+      <p class="text-[11px] text-slate-400">Visualisasi Kondisi:</p>
       <label class="relative block h-32 rounded-lg overflow-hidden border ${imgs[i]?'border-slate-800':'border-dashed border-slate-700 hover:border-purple-500'} bg-slate-900 cursor-pointer">
-        ${imgs[i]?`<img src="${imgs[i]}" alt="Hari ${d.hst}" class="w-full h-full object-cover"><button type="button" onclick="delLstmImg(${i},event)" title="Hapus gambar" class="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-slate-900/80 hover:bg-red-700 text-white text-xs flex items-center justify-center"><i class="fa-solid fa-xmark"></i></button>`:`<div class="h-full flex flex-col items-center justify-center text-slate-500"><i class="fa-solid fa-image text-2xl text-purple-300/70"></i><span class="text-[11px] mt-1">Klik untuk upload gambar</span></div>`}
+        ${imgs[i]?`<img src="${imgs[i]}" alt="Hari ke-${i+1}" class="w-full h-full object-cover"><button type="button" onclick="delLstmImg(${i},event)" title="Hapus gambar" class="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-slate-900/80 hover:bg-red-700 text-white text-xs flex items-center justify-center"><i class="fa-solid fa-xmark"></i></button>`:`<div class="h-full flex flex-col items-center justify-center text-slate-500"><i class="fa-solid fa-image text-2xl text-purple-300/70"></i><span class="text-[11px] mt-1">Klik untuk upload gambar</span></div>`}
         <input type="file" accept="image/*" class="hidden" onchange="setLstmImg(${i},event)">
       </label>
     </div>`;
@@ -756,35 +885,38 @@ function renderHistory(){
   const q=($('histSearch').value||'').toLowerCase();
   if(curHist==='sensor'){
     $('histHead').innerHTML='<tr><th class="p-3">Waktu</th><th class="p-3">Soil (%)</th><th class="p-3">Suhu (°C)</th><th class="p-3">Kelembapan (%)</th><th class="p-3">Pompa</th><th class="p-3">Mode</th></tr>';
-    const rows=load('hist_sensor',[]).slice().reverse().filter(r=>JSON.stringify(r).toLowerCase().includes(q));
-    $('histBody').innerHTML=rows.map(r=>`<tr class="hover:bg-slate-800/50"><td class="p-3 text-white">${esc(r.t)}</td><td class="p-3">${r.soil}</td><td class="p-3">${r.temp}</td><td class="p-3">${r.hum}</td><td class="p-3">${r.pump}</td><td class="p-3">${r.mode}</td></tr>`).join('')||'<tr><td colspan="6" class="p-3 text-slate-500">Belum ada data.</td></tr>';
+    const rows=firebaseHistory.slice().reverse().filter(r=>JSON.stringify(r).toLowerCase().includes(q));
+    $('histBody').innerHTML=rows.map(r=>`<tr class="hover:bg-slate-800/50"><td class="p-3 text-white">${esc(r.t)}</td><td class="p-3">${r.soil}</td><td class="p-3">${r.temp}</td><td class="p-3">${r.hum}</td><td class="p-3">${r.pump?'ON':'OFF'}</td><td class="p-3">Firebase</td></tr>`).join('')||'<tr><td colspan="6" class="p-3 text-slate-500">Belum ada data Firebase.</td></tr>';
   }else{
     $('histHead').innerHTML='<tr><th class="p-3">Waktu</th><th class="p-3">File</th><th class="p-3">Lebar Daun (cm)</th><th class="p-3">Fase</th><th class="p-3">Keyakinan</th><th class="p-3">Diagnosa Hama/Penyakit</th></tr>';
     const rows=load('hist_cnn',[]).slice().reverse().filter(r=>JSON.stringify(r).toLowerCase().includes(q));
     $('histBody').innerHTML=rows.map(r=>`<tr class="hover:bg-slate-800/50"><td class="p-3 text-white">${esc(r.t)}</td><td class="p-3">${esc(r.file)}</td><td class="p-3">${r.width}</td><td class="p-3">${esc(r.phase)}</td><td class="p-3">${r.conf}${r.conf==="-"?"":"%"}</td><td class="p-3">${esc(r.diag||"-")}</td></tr>`).join('')||'<tr><td colspan="6" class="p-3 text-slate-500">Belum ada hasil analisis CNN.</td></tr>';
   }
 }
+
 function exportCSV(){
   let csv='';
-  if(curHist==='sensor'){csv='Waktu,Soil,Suhu,Kelembapan,Pompa,Mode\n'+load('hist_sensor',[]).map(r=>[r.t,r.soil,r.temp,r.hum,r.pump,r.mode].join(',')).join('\n')}
+  if(curHist==='sensor'){csv='Waktu,Soil,Suhu,Kelembapan,Pompa,Mode\n'+firebaseHistory.map(r=>[r.t,r.soil,r.temp,r.hum,r.pump?'ON':'OFF','Firebase'].join(',')).join('\n')}
   else{csv='Waktu,File,Lebar_cm,Fase,Keyakinan,Diagnosa\n'+load('hist_cnn',[]).map(r=>[r.t,r.file,r.width,r.phase,r.conf,r.diag||'-'].map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n')}
   const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
   a.download=`selada_history_${curHist}.csv`; a.click();
 }
 function clearHistory(){
-  if(!confirm('Hapus riwayat '+(curHist==='sensor'?'data sensor':'hasil CNN')+'?')) return;
-  save(curHist==='sensor'?'hist_sensor':'hist_cnn',[]); renderHistory();
+  if(curHist==='sensor'){ alert('Riwayat sensor berasal dari Firebase bersama dan tidak dihapus dari halaman ini.'); return; }
+  if(!confirm('Hapus riwayat hasil CNN di browser?')) return;
+  save('hist_cnn',[]); renderHistory();
 }
  
 /* ============ INIT ============ */
 window.onload=()=>{
-  initLiveCharts(); initGrowChart();
-  let pd=load('plant_date',null);
-  if(!pd){const d=new Date(Date.now()-38*86400000); pd=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
-  $('plantDate').value=pd; $('hstNow').value=clamp(Math.floor(getHST()),1,41); updateGrowth();
-  renderPump(); setBar([0,0,0]); histTab('sensor');
+  try{ initLiveCharts(); initGrowChart(); }catch(e){ console.error('Chart init:',e); }
+  const pd=load('plant_date',null);
+  if(pd) $('plantDate').value=pd;
+  $('hstNow').value=''; updateGrowth();
+  renderPump(); setBar([0,0,0]); histTab('sensor'); changeSource();
   const cc=load('cam_cfg',null); if(cc){$('camIp').value=cc.ip;$('camPort').value=cc.port;$('camPath').value=cc.path}
   loop();
+  console.log('Smart Farming Firebase ready. Database:',FIREBASE_DB_URL);
 };
 </script>
 </body>
